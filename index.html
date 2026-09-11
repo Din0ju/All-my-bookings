@@ -185,7 +185,8 @@
     <button id="exportBtn" type="button" class="underline" style="color:var(--muted)">데이터 내보내기</button>
     <button id="importBtn" type="button" class="underline" style="color:var(--muted)">데이터 가져오기</button>
   </div>
-  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v31 (날짜 오추출 방지 · KTX 접두어 깨짐 보강, 실제 OCR 검증)</p>
+  <p id="learnedStationsInfo" class="text-[11px] mt-1 px-1" style="color:var(--muted)"></p>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v32 (직접입력·수정으로 역명 사전 자동 학습)</p>
 </div>
 
 <!-- 상세 모달 -->
@@ -361,6 +362,7 @@
   --------------------------------------------------------- */
   const TICKETS_KEY = "trainCalendarTickets_v2";
   const NOTES_KEY = "trainCalendarNotes_v1";
+  const CUSTOM_STATIONS_KEY = "trainCalendarCustomStations_v1";
 
   function loadTickets(){
     try{
@@ -380,14 +382,45 @@
   }
   function saveNotes(){ localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); }
 
+  // 역명 사전에 없는 역이 출발/도착역으로 직접 입력되면 자동으로 사전에 추가한다.
+  // 다음 번 OCR부터는(정정이든 신규 입력이든) 이 역이 포함된 표를 곧바로 인식할 수 있게 된다.
+  function loadCustomStations(){
+    try{
+      const raw = localStorage.getItem(CUSTOM_STATIONS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    }catch(e){ return []; }
+  }
+  function saveCustomStations(){
+    localStorage.setItem(CUSTOM_STATIONS_KEY, JSON.stringify(customStations));
+    renderLearnedStationsInfo();
+  }
+  function renderLearnedStationsInfo(){
+    const el = document.getElementById("learnedStationsInfo");
+    if(!el) return;
+    el.textContent = customStations.length
+      ? `학습된 역명 ${customStations.length}개: ${customStations.join(", ")}`
+      : "";
+  }
+  // 순수 역명 형태(한글 2~8자, 공백/괄호 없음)일 때만 학습한다 — '광주(유・스퀘어)'처럼 부가 설명이 붙은
+  // 버스 정류장명까지 사전에 넣으면 나중에 다른 역명과 오매칭될 수 있어 제외한다.
+  const STATION_SHAPE = /^[가-힣]{2,8}$/;
+  function learnStationIfNew(name){
+    if(!name || !STATION_SHAPE.test(name)) return;
+    if(KNOWN_STATIONS.includes(name) || customStations.includes(name)) return;
+    customStations.push(name);
+    saveCustomStations();
+  }
+  function allKnownStations(){ return KNOWN_STATIONS.concat(customStations); }
+
   let tickets = loadTickets();
   let notes = loadNotes();
+  let customStations = loadCustomStations();
 
   // 브라우저의 저장공간(localStorage)은 주소(origin)마다 완전히 분리되어 있어서,
   // 로컬 파일 주소에서 쓰던 데이터가 새 호스팅 주소로 자동으로 옮겨지지 않는다.
   // 이 기능은 그 데이터를 JSON 텍스트로 내보내고, 다른 주소에서 붙여넣어 가져올 수 있게 해준다.
   function exportData(){
-    const payload = JSON.stringify({ tickets, notes });
+    const payload = JSON.stringify({ tickets, notes, customStations });
     prompt("아래 내용을 전체 선택해서 복사한 뒤, 다른 주소의 '데이터 가져오기'에 붙여넣으세요.", payload);
   }
 
@@ -410,6 +443,9 @@
       if(parsed.notes && typeof parsed.notes === "object"){
         Object.keys(parsed.notes).forEach(k => { notes[k] = true; });
         saveNotes();
+      }
+      if(Array.isArray(parsed.customStations)){
+        parsed.customStations.forEach(s => learnStationIfNew(s));
       }
       saveTickets();
       renderCalendar();
@@ -699,6 +735,12 @@
     } else {
       tickets.push(payload);
     }
+    // 기차 일정의 출발/도착역이 사전에 없는 새 역명이면 학습해둔다. 다음부터는 이 역이 포함된
+    // 어떤 표(다른 이미지)를 인식할 때도 자동으로 잡힌다. 버스 정류장명은 형태가 달라(괄호 등) 제외.
+    if(payload.mode !== "bus"){
+      learnStationIfNew(payload.dep);
+      learnStationIfNew(payload.arr);
+    }
     saveTickets();
     closeForm();
     jumpToDate(payload.date);
@@ -878,7 +920,7 @@
     if(times[1]) result.arrTime = times[1];
 
     const found = [];
-    for(const s of KNOWN_STATIONS){
+    for(const s of allKnownStations()){
       const idx = segment.indexOf(s);
       if(idx !== -1) found.push({ s, idx });
     }
@@ -1720,6 +1762,7 @@
     document.querySelectorAll(".note-chip.show-x").forEach(c => c.classList.remove("show-x"));
   });
 
+  renderLearnedStationsInfo();
   renderCalendar();
 })();
 </script>
