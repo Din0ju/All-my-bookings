@@ -179,7 +179,7 @@
     <button id="exportBtn" type="button" class="underline" style="color:var(--muted)">데이터 내보내기</button>
     <button id="importBtn" type="button" class="underline" style="color:var(--muted)">데이터 가져오기</button>
   </div>
-  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v26 (역명 사전에 광명·행신 추가)</p>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v27 (같은 날 일정 시간순 정렬)</p>
 </div>
 
 <!-- 상세 모달 -->
@@ -428,7 +428,11 @@
   function fmtDate(y,m,d){
     return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
   }
-  function ticketsOn(dateStr){ return tickets.filter(t => t.date === dateStr); }
+  function ticketsOn(dateStr){
+    return tickets
+      .filter(t => t.date === dateStr)
+      .sort((a, b) => (a.depTime || "").localeCompare(b.depTime || ""));
+  }
 
   // 대한민국 공휴일(관공서의 공휴일에 관한 규정 기준, 대체공휴일 포함) — 2026년
   // 설날·추석 연휴는 일요일과 겹칠 때만 대체공휴일이 생기고, 국경일·어린이날은 토요일과 겹쳐도 생긴다는
