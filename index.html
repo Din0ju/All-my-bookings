@@ -185,7 +185,7 @@
     <button id="exportBtn" type="button" class="underline" style="color:var(--muted)">데이터 내보내기</button>
     <button id="importBtn" type="button" class="underline" style="color:var(--muted)">데이터 가져오기</button>
   </div>
-  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v29 (날짜 월/일 범위 검증 · 00월 오류 방지)</p>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v31 (날짜 오추출 방지 · KTX 접두어 깨짐 보강, 실제 OCR 검증)</p>
 </div>
 
 <!-- 상세 모달 -->
@@ -828,9 +828,11 @@
   // 여정과 무관한 라벨이 붙은 날짜를 제외한 뒤 남은 첫 'YYYY년/월/일' 패턴을 사용한다.
   // '월'·'일' 글자는 OCR로 다른 문자(예: E, 숫자 등)로 깨지는 경우가 많아, 정확한 한 글자를 요구하지 않고
   // 숫자와 숫자 사이에 있는 짧은 구분자 정도로만 취급한다.
+  // 단, 그 구분자가 아예 사라져 숫자끼리 바로 붙어버린 경우(예: '20264 092! 302!')는 연-월-일 경계를
+  // 임의로 잘라내면 값이 틀리게 되므로, 최소 1글자는 구분자로 남아있을 때만 인정한다(0글자면 포기).
   // 연도가 2020~2035 범위를 벗어나면(OCR 오인식) 건너뛰고 다음 후보를 찾는다.
   function findPlausibleDate(segment){
-    const labelMatch = segment.match(/이용\s*일자[^\d]{0,15}(\d{4})[^\d]{0,3}(\d{1,2})[^\d]{0,3}(\d{1,2})/);
+    const labelMatch = segment.match(/이용\s*일자[^\d]{0,15}(\d{4})[^\d]{1,3}(\d{1,2})[^\d]{1,3}(\d{1,2})/);
     if(labelMatch && isPlausibleDateParts(labelMatch[1], labelMatch[2], labelMatch[3])){
       return `${labelMatch[1]}-${String(labelMatch[2]).padStart(2,"0")}-${String(labelMatch[3]).padStart(2,"0")}`;
     }
@@ -839,8 +841,9 @@
       .replace(/승인\s*일자[^\n]*/g, "")
       .replace(/판매\s*일자[^\n]*/g, "");
     // 조회/캡처 시각처럼 'YYYY-MM-DD HH:MM' 형태로만 찍히는 값은 실제 이용일과 절대 겹치지 않으므로 제외.
-    // 단어 단위로 재구성된 텍스트는 숫자와 '년'/'월'/'일' 사이에도 공백이 낄 수 있어 [^\d]{0,3}로 관대하게 허용한다.
-    const candidates = [...stripped.matchAll(/(\d{4})\s*년[^\d]{0,3}(\d{1,2})[^\d]{0,3}(\d{1,2})[^\d]{0,3}/g)];
+    // 단어 단위로 재구성된 텍스트는 숫자와 '년'/'월'/'일' 사이에도 공백이 낄 수 있어 [^\d]{1,3}로 관대하게 허용하되,
+    // 0글자(구분자 없음)는 연-월-일 경계가 불분명해지므로 제외한다.
+    const candidates = [...stripped.matchAll(/(\d{4})\s*년[^\d]{1,3}(\d{1,2})[^\d]{1,3}(\d{1,2})[^\d]{0,3}/g)];
     for(const m of candidates){
       if(isPlausibleDateParts(m[1], m[2], m[3])){
         return `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
@@ -888,9 +891,19 @@
   function extractTrain(segment, result){
     const trainKeyword = /(KTX|SRT|ITX|새마을|무궁화|누리로|통근열차)/i;
     const trainLabelMatch = segment.match(/열차\s*정보[^\S\n]*[:：]?\s*([^\n]{2,20})/);
-    if(trainLabelMatch && trainKeyword.test(trainLabelMatch[1])){
-      result.train = trainLabelMatch[1].trim();
-      return;
+    if(trainLabelMatch){
+      if(trainKeyword.test(trainLabelMatch[1])){
+        result.train = trainLabelMatch[1].trim();
+        return;
+      }
+      // '열차정보' 라벨은 있는데 'KTX' 접두어가 심하게 깨진 경우(예: '<1>×-산천 420').
+      // 뒤에 붙는 하위 차종명('산천'/'이음')과 열차번호만 살아있으면 실제 열차명일 가능성이 매우 높으므로,
+      // 지저분한 원문 그대로 쓰지 않고 'KTX-산천 420'처럼 깔끔하게 재구성한다.
+      const subTypeMatch = trainLabelMatch[1].match(/(산천|이음)\s*(\d{2,4})?/);
+      if(subTypeMatch){
+        result.train = `KTX-${subTypeMatch[1]}${subTypeMatch[2] ? " "+subTypeMatch[2] : ""}`;
+        return;
+      }
     }
     const trainMatch = segment.match(/(KTX[-\s]?산천|KTX[-\s]?이음|SRT|ITX[-\s]?새마을|무궁화|누리로|통근열차|KTX)\s?호?\s?(\d{2,4})?/i);
     if(trainMatch){
@@ -912,7 +925,14 @@
   function parseTicketSegment(segment){
     const result = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
     // 경계로는 타임스탬프를 활용하되, 실제 날짜·시각 추출 시에는 조회 시각이 섞이지 않도록 제거
-    const cleaned = segment.replace(TIMESTAMP_PATTERN, "");
+    let cleaned = segment.replace(TIMESTAMP_PATTERN, "");
+    // '영수증' 형식에만 있는 결제·사업자 정보(카드번호, 승인번호, 사업자번호, 대표전화)는 열차번호·좌석·날짜와
+    // 무관한 잡음이므로, 혹시 모를 오인식을 막기 위해 해당 줄 자체를 미리 걷어내고 나머지를 분석한다.
+    cleaned = cleaned
+      .replace(/카드\s*번호[^\n]*/g, "")
+      .replace(/승인\s*번호[^\n]*/g, "")
+      .replace(/사업자\s*번호[^\n]*/g, "")
+      .replace(/대표\s*전화[^\n]*/g, "");
     result.date = findPlausibleDate(cleaned);
     extractStationsAndTimes(cleaned, result);
     extractTrain(cleaned, result);
@@ -1493,10 +1513,10 @@
 
     // 버스표: 날짜는 있는데 출발시각/출발지/도착지가 비어있으면 PSM6→PSM11로 전체 재시도,
     // 그래도 출발지가 비면 그 줄만 좌표로 확대해 최종 재시도한다.
-    const busNeedsRetry = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
+    const busNeedsRetry = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr || !p.seat));
     if(busNeedsRetry){
       for(const psm of ["6", "11"]){
-        const stillMissing = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
+        const stillMissing = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr || !p.seat));
         if(!stillMissing) break;
         ocrStatus.textContent = `버스표 누락 항목 재시도 중... (PSM${psm})`;
         try{
