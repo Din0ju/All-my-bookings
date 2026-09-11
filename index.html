@@ -25,6 +25,8 @@
     --yellow-ink:#8A6D14;
     --pink:#FCE1EC;
     --pink-ink:#C0507E;
+    --green:#DFF3D2;
+    --green-ink:#4C7A2E;
     --paper:#FAFBFD;
     --line:#E7EBF0;
     --ink:#33373D;
@@ -58,6 +60,9 @@
     transition: transform .15s ease, background .15s ease;
   }
   .ticket-chip:hover{ background:#C7E7F7; transform: translateX(1px); }
+
+  .ticket-chip-bus{ background:var(--green); color:var(--green-ink); }
+  .ticket-chip-bus:hover{ background:#CDE9BA; }
 
   .note-chip{
     background:var(--yellow);
@@ -158,7 +163,8 @@
 
   <!-- 범례 -->
   <div class="flex items-center gap-4 mb-3 text-xs flex-wrap px-1" style="color:var(--muted)">
-    <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:var(--sky)"></span>확정 일정</span>
+    <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:var(--sky)"></span>기차</span>
+    <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:var(--green)"></span>버스</span>
     <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="border:1.5px dashed var(--yellow-ink); background:var(--yellow)"></span>예매 필요</span>
     <span class="flex items-center gap-1.5"><span style="color:var(--danger); font-size:10px;">●</span>공휴일</span>
     <span class="hidden md:inline">· 빈 칸 더블클릭으로 메모 추가 · 일정 클릭으로 상세/수정 · 상단 버튼으로 신규 등록</span>
@@ -179,7 +185,7 @@
     <button id="exportBtn" type="button" class="underline" style="color:var(--muted)">데이터 내보내기</button>
     <button id="importBtn" type="button" class="underline" style="color:var(--muted)">데이터 가져오기</button>
   </div>
-  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v27 (같은 날 일정 시간순 정렬)</p>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v28 (버스 일정 파스텔 연두색으로 구분)</p>
 </div>
 
 <!-- 상세 모달 -->
@@ -516,7 +522,7 @@
 
       ticketsOn(dateStr).forEach(t => {
         const chip = document.createElement("div");
-        chip.className = "ticket-chip text-[9px] md:text-[11px]";
+        chip.className = `ticket-chip text-[9px] md:text-[11px] ${t.mode === "bus" ? "ticket-chip-bus" : ""}`;
         chip.innerHTML = `
           <div class="mono font-bold chip-line time-line">${t.depTime}${t.mode === "bus" ? '<span class="bus-tag">BUS</span>' : ""}</div>
           <div class="route-line opacity-95">${t.dep}→${t.arr}</div>
