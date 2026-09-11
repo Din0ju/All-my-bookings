@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>통합 기차표 캘린더</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%232E7DAE'/%3E%3Ctext x='50' y='68' font-size='54' text-anchor='middle'%3E%F0%9F%9A%84%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%232E7DAE'/%3E%3Ctext x='50' y='68' font-size='54' text-anchor='middle'%3E%F0%9F%9A%84%3C/text%3E%3C/svg%3E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="기차표 캘린더">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#2E7DAE">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#2E7DAE;
+    --navy-soft:#256a92;
+    --sky:#DCF0FA;
+    --sky-ink:#1D6E93;
+    --yellow:#FDF0B0;
+    --yellow-ink:#8A6D14;
+    --pink:#FCE1EC;
+    --pink-ink:#C0507E;
+    --paper:#FAFBFD;
+    --line:#E7EBF0;
+    --ink:#33373D;
+    --muted:#868C96;
+    --danger:#C0503D;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    font-family:'Inter','Pretendard',system-ui,-apple-system,sans-serif;
+    background:var(--paper);
+    color:var(--ink);
+  }
+  .mono{ font-family:'IBM Plex Mono',monospace; font-variant-numeric: tabular-nums; }
+
+  .cell{
+    min-height:92px;
+    border:1px solid var(--line);
+    background:#fff;
+    transition: box-shadow .18s ease, border-color .18s ease;
+  }
+  @media (min-width:768px){ .cell{ min-height:120px; } }
+  .cell.in-month:hover{ box-shadow: inset 0 0 0 1.5px var(--navy); border-color: var(--navy); cursor:pointer; }
+  .cell.out-month{ background:#FCFCFC; color:#D3D6DA; }
+
+  .ticket-chip{
+    background:var(--sky);
+    color:var(--sky-ink);
+    border-radius:4px;
+    padding:2px 1px;
+    line-height:1.2;
+    transition: transform .15s ease, background .15s ease;
+  }
+  .ticket-chip:hover{ background:#C7E7F7; transform: translateX(1px); }
+
+  .note-chip{
+    background:var(--yellow);
+    border:1px dashed var(--yellow-ink);
+    color:var(--yellow-ink);
+    border-radius:4px;
+    padding:2px 3px;
+    position:relative;
+    animation: pop .16s ease;
+  }
+  @keyframes pop{ from{ transform:scale(.92); opacity:0; } to{ transform:scale(1); opacity:1; } }
+
+  .note-x{
+    position:absolute; top:-7px; right:-7px;
+    width:17px; height:17px; border-radius:9999px;
+    background:var(--yellow-ink); color:#fff;
+    display:none; align-items:center; justify-content:center;
+    font-size:10px; line-height:1; cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,.2);
+    transition: background .15s ease;
+  }
+  .note-x:hover{ background:#6f5710; }
+  .note-chip.show-x .note-x{ display:flex; }
+
+  .chip-line{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:-0.3px; }
+  .time-line{
+    transform:scaleX(0.86); transform-origin:left center;
+    letter-spacing:-0.4px;
+  }
+  .bus-tag{ font-size:0.62em; font-weight:600; opacity:.8; margin-left:2px; letter-spacing:0; }
+  .route-line{
+    font-size:9px; letter-spacing:-0.6px;
+    transform:scaleX(0.82); transform-origin:left center;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  @media (min-width:768px){ .route-line{ font-size:11px; letter-spacing:-0.4px; transform:scaleX(0.9); } }
+
+  .modal-backdrop{
+    background:rgba(51,55,61,.45);
+    backdrop-filter: blur(1px);
+  }
+  .modal-panel{ animation: rise .18s ease; }
+  @keyframes rise{ from{ transform:translateY(8px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
+
+  .field-label{ font-size:11px; color:var(--muted); margin-bottom:3px; display:block; }
+  .field-input{
+    width:100%; border:1px solid var(--line); border-radius:4px;
+    padding:7px 9px; font-size:14px; background:#fff;
+    transition: border-color .15s ease;
+  }
+  .field-input:focus{ outline:none; border-color:var(--navy); }
+
+  .tab-btn{
+    padding:8px 14px; font-size:13px; font-weight:600; border-bottom:2px solid transparent;
+    color:var(--muted); transition: color .15s ease, border-color .15s ease;
+  }
+  .tab-btn.active{ color:var(--navy); border-color:var(--navy); }
+
+  .drop-zone{
+    border:1.5px dashed var(--line); border-radius:6px; padding:22px 14px;
+    text-align:center; transition: border-color .15s ease, background .15s ease;
+  }
+  .drop-zone.drag-over{ border-color:var(--navy); background:#EEF6FB; }
+
+  .btn-primary{ background:var(--navy); color:#fff; transition: background .15s ease; }
+  .btn-primary:hover{ background:var(--navy-soft); }
+  .btn-primary:disabled{ background:#BFC5CC; cursor:not-allowed; }
+  .btn-ghost{ border:1px solid var(--line); color:var(--ink); transition: background .15s ease; }
+  .btn-ghost:hover{ background:#F1F3F5; }
+  .btn-danger{ color:var(--danger); border:1px solid var(--danger); transition: background .15s ease; }
+  .btn-danger:hover{ background:#FBEEEB; }
+
+  .scrollbar-thin::-webkit-scrollbar{ height:6px; width:6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb{ background:var(--line); border-radius:3px; }
+
+  .progress-track{ height:5px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .progress-fill{ height:100%; background:var(--navy); transition: width .2s ease; width:0%; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-5xl mx-auto px-2 sm:px-4 py-6 md:py-10">
+
+  <!-- 헤더 -->
+  <header class="flex items-end justify-between mb-5 md:mb-8 flex-wrap gap-3 px-1">
+    <div>
+      <p class="mono text-[11px] tracking-wide" style="color:var(--muted)">TRAIN SCHEDULE</p>
+      <h1 class="text-2xl md:text-3xl font-extrabold" style="color:var(--navy)">통합 기차표 캘린더</h1>
+    </div>
+    <div class="flex items-center gap-1 md:gap-2 flex-wrap">
+      <button id="addTicketBtn" class="text-xs md:text-sm px-3 py-2 rounded btn-primary font-semibold">+ 일정 등록</button>
+      <button id="prevBtn" class="w-9 h-9 rounded-full border flex items-center justify-center hover:bg-white transition" style="border-color:var(--line)">‹</button>
+      <div id="monthLabel" class="mono text-base md:text-lg font-semibold w-32 text-center" style="color:var(--navy)"></div>
+      <button id="nextBtn" class="w-9 h-9 rounded-full border flex items-center justify-center hover:bg-white transition" style="border-color:var(--line)">›</button>
+      <button id="todayBtn" class="text-xs px-3 py-2 rounded border hover:bg-white transition" style="border-color:var(--line); color:var(--muted)">오늘</button>
+    </div>
+  </header>
+
+  <!-- 범례 -->
+  <div class="flex items-center gap-4 mb-3 text-xs flex-wrap px-1" style="color:var(--muted)">
+    <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:var(--sky)"></span>확정 일정</span>
+    <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="border:1.5px dashed var(--yellow-ink); background:var(--yellow)"></span>예매 필요</span>
+    <span class="flex items-center gap-1.5"><span style="color:var(--danger); font-size:10px;">●</span>공휴일</span>
+    <span class="hidden md:inline">· 빈 칸 더블클릭으로 메모 추가 · 일정 클릭으로 상세/수정 · 상단 버튼으로 신규 등록</span>
+  </div>
+
+  <!-- 요일 헤더 -->
+  <div class="grid grid-cols-7 text-center text-xs font-semibold py-2 rounded-t" style="background:var(--sky); color:var(--sky-ink)">
+    <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+  </div>
+
+  <!-- 캘린더 그리드 -->
+  <div id="calendarGrid" class="grid grid-cols-7"></div>
+
+  <p class="text-[11px] mt-4 px-1" style="color:var(--muted)">
+    일반앱 · 기업회원 예매 내역이 정규화되어 하나의 달력에 병합 표시됩니다. 추가·수정한 내용은 이 브라우저에 저장됩니다.
+  </p>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v23 (2026년 대한민국 공휴일 반영)</p>
+</div>
+
+<!-- 상세 모달 -->
+<div id="detailModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-50 px-4">
+  <div class="modal-panel bg-white rounded-lg max-w-sm w-full p-6 relative" style="border:1px solid var(--line)">
+    <button class="closeModalBtn absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 text-lg" style="color:var(--muted)">×</button>
+    <p id="modalDate" class="mono text-xs mb-1" style="color:var(--muted)"></p>
+    <h2 id="modalTrain" class="text-lg font-bold mb-4" style="color:var(--navy)"></h2>
+
+    <div class="flex items-center justify-between mb-5">
+      <div class="text-left">
+        <p id="modalDep" class="text-xl font-extrabold"></p>
+        <p id="modalDepTime" class="mono text-2xl font-extrabold" style="color:var(--navy)"></p>
+      </div>
+      <div class="flex-1 flex items-center px-3">
+        <div class="h-px flex-1" style="background:var(--line)"></div>
+        <span class="mx-1 text-sm" style="color:var(--muted)">→</span>
+        <div class="h-px flex-1" style="background:var(--line)"></div>
+      </div>
+      <div class="text-right">
+        <p id="modalArr" class="text-xl font-extrabold"></p>
+        <p id="modalArrTime" class="mono text-2xl font-extrabold" style="color:var(--navy)"></p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 text-sm border-t pt-4 mb-5" style="border-color:var(--line)">
+      <div>
+        <p class="text-[11px]" style="color:var(--muted)">좌석</p>
+        <p class="font-semibold mono" id="modalSeat"></p>
+      </div>
+      <div>
+        <p class="text-[11px]" style="color:var(--muted)">예매 경로</p>
+        <p class="font-semibold" id="modalSource"></p>
+      </div>
+    </div>
+
+    <div class="flex gap-2">
+      <button id="editTicketBtn" class="flex-1 py-2 rounded text-sm font-semibold btn-primary">정보가 틀렸나요? 수정</button>
+      <button id="deleteTicketBtn" class="px-4 py-2 rounded text-sm font-semibold btn-danger">삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- 등록/수정 모달 -->
+<div id="formModal" class="fixed inset-0 modal-backdrop hidden items-center justify-center z-50 px-4 py-8 overflow-y-auto">
+  <div class="modal-panel bg-white rounded-lg max-w-md w-full p-6 relative my-auto" style="border:1px solid var(--line)">
+    <button class="closeFormBtn absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 text-lg" style="color:var(--muted)">×</button>
+    <h2 id="formTitle" class="text-lg font-bold mb-1" style="color:var(--navy)">일정 등록</h2>
+    <p class="text-xs mb-4" style="color:var(--muted)">기차표·버스표 이미지를 올리면 자동으로 인식해 바로 저장하거나, 직접 입력할 수 있습니다.</p>
+
+    <!-- 입력 방식 탭 -->
+    <div class="flex border-b mb-4" style="border-color:var(--line)">
+      <button type="button" class="tab-btn" data-tab="upload">🖼️ 이미지 업로드</button>
+      <button type="button" class="tab-btn active" data-tab="manual">✏️ 직접 입력</button>
+    </div>
+
+    <!-- 업로드 탭: 인식 즉시 자동 저장 (확인 화면 없음, 틀리면 캘린더에서 수정) -->
+    <div id="tabUpload" class="hidden mb-1">
+      <div id="dropZone" class="drop-zone cursor-pointer">
+        <input type="file" id="fileInput" accept="image/*" class="hidden">
+        <div id="dropZoneIdle">
+          <p class="text-sm font-semibold mb-1" style="color:var(--navy)">승차권 캡처 이미지를 선택하세요</p>
+          <p class="text-[11px]" style="color:var(--muted)">클릭하여 업로드 · 이미지 한 장에 승차권 여러 장도 가능</p>
+        </div>
+        <img id="previewImg" class="hidden max-h-40 mx-auto rounded" />
+      </div>
+      <button id="recognizeBtn" type="button" disabled class="mt-3 w-full py-2 rounded text-sm font-semibold btn-primary">이미지에서 인식 후 자동 저장</button>
+      <div id="ocrProgress" class="hidden mt-3">
+        <div class="progress-track"><div id="ocrProgressFill" class="progress-fill"></div></div>
+        <p id="ocrStatus" class="text-[11px] mt-1" style="color:var(--muted)">인식 준비 중...</p>
+      </div>
+      <p id="ocrHint" class="text-[11px] mt-2" style="color:var(--muted)">
+        인식된 내용은 확인 없이 바로 캘린더에 저장됩니다. 값이 틀렸다면 캘린더에서 해당 일정을 눌러 수정하세요.
+      </p>
+      <div id="ocrSummary" class="hidden mt-3 p-3 rounded text-xs" style="background:var(--sky); color:var(--sky-ink)"></div>
+      <div id="uploadDoneActions" class="hidden mt-3 flex gap-2">
+        <button id="retryRecognizeBtn" type="button" class="flex-1 py-2 rounded text-sm font-semibold btn-primary">다시 인식하기</button>
+        <button id="uploadDoneBtn" type="button" class="closeFormBtn px-4 py-2 rounded text-sm font-semibold btn-ghost">닫기</button>
+      </div>
+    </div>
+
+    <!-- 직접 입력 탭 -->
+    <div id="tabManual">
+      <form id="ticketForm" class="grid grid-cols-2 gap-3">
+        <input type="hidden" id="f_id">
+        <input type="hidden" id="f_mode" value="train">
+        <div class="col-span-2">
+          <label class="field-label">날짜 *</label>
+          <input type="date" id="f_date" class="field-input" required>
+        </div>
+        <div>
+          <label class="field-label">출발역 *</label>
+          <input type="text" id="f_dep" class="field-input" placeholder="예: 오송" required>
+        </div>
+        <div>
+          <label class="field-label">도착역 *</label>
+          <input type="text" id="f_arr" class="field-input" placeholder="예: 부산" required>
+        </div>
+        <div>
+          <label class="field-label">출발시각 *</label>
+          <input type="time" id="f_depTime" class="field-input" required>
+        </div>
+        <div>
+          <label class="field-label">도착시각</label>
+          <input type="time" id="f_arrTime" class="field-input">
+        </div>
+        <div>
+          <label class="field-label">열차명</label>
+          <input type="text" id="f_train" class="field-input" placeholder="예: KTX-산천 346">
+        </div>
+        <div>
+          <label class="field-label">좌석</label>
+          <input type="text" id="f_seat" class="field-input" placeholder="예: 8호차 11D">
+        </div>
+        <div class="col-span-2">
+          <label class="field-label">예매 경로</label>
+          <select id="f_source" class="field-input">
+            <option value="일반앱">일반앱</option>
+            <option value="기업회원">기업회원</option>
+            <option value="이미지 인식">이미지 인식</option>
+            <option value="수동입력">수동입력</option>
+          </select>
+        </div>
+
+        <div class="col-span-2 flex gap-2 mt-2">
+          <button type="submit" class="flex-1 py-2 rounded text-sm font-semibold btn-primary">저장</button>
+          <button type="button" class="closeFormBtn px-4 py-2 rounded text-sm font-semibold btn-ghost">취소</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------------------------------------------------
+     1) 최초 시드 데이터 (일반앱 / 기업회원 소스 정규화 후 병합)
+        이후 사용자의 수정·추가·삭제는 localStorage 기준으로 관리
+  --------------------------------------------------------- */
+  const rawFromGeneralApp = [
+    { date:"2026-09-13", depStation:"나주", arrStation:"오송", depTime:"13:30", arrTime:"14:59", train:"KTX-산천 420", car:"-", seat:"-" }
+  ];
+  const rawFromCorporateSite = [
+    { travelDate:"2026-09-30", from:"부산", to:"오송", departure:"16:04", arrival:"17:50", trainName:"KTX-산천 346", carNo:"8호차", seatNo:"11D" },
+    { travelDate:"2026-10-02", from:"오송", to:"진주", departure:"15:46", arrival:"18:28", trainName:"KTX-산천 385", carNo:"8호차", seatNo:"2A" }
+  ];
+
+  function normalizeGeneralApp(list){
+    return list.map((t,i) => ({
+      id: `seed-app-${i}`,
+      date: t.date, dep: t.depStation, arr: t.arrStation,
+      depTime: t.depTime, arrTime: t.arrTime, train: t.train,
+      seat: (t.car && t.car !== "-") ? `${t.car} ${t.seat}` : "미배정",
+      source: "일반앱"
+    }));
+  }
+  function normalizeCorporate(list){
+    return list.map((t,i) => ({
+      id: `seed-corp-${i}`,
+      date: t.travelDate, dep: t.from, arr: t.to,
+      depTime: t.departure, arrTime: t.arrival, train: t.trainName,
+      seat: `${t.carNo} ${t.seatNo}`,
+      source: "기업회원"
+    }));
+  }
+  const SEED_TICKETS = [...normalizeGeneralApp(rawFromGeneralApp), ...normalizeCorporate(rawFromCorporateSite)];
+
+  /* ---------------------------------------------------------
+     2) 저장소 (localStorage) - 일정 / 메모
+  --------------------------------------------------------- */
+  const TICKETS_KEY = "trainCalendarTickets_v2";
+  const NOTES_KEY = "trainCalendarNotes_v1";
+
+  function loadTickets(){
+    try{
+      const raw = localStorage.getItem(TICKETS_KEY);
+      if(raw) return JSON.parse(raw);
+    }catch(e){ console.warn("일정을 불러오지 못했습니다.", e); }
+    localStorage.setItem(TICKETS_KEY, JSON.stringify(SEED_TICKETS));
+    return JSON.parse(JSON.stringify(SEED_TICKETS));
+  }
+  function saveTickets(){ localStorage.setItem(TICKETS_KEY, JSON.stringify(tickets)); }
+
+  function loadNotes(){
+    try{
+      const raw = localStorage.getItem(NOTES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    }catch(e){ return {}; }
+  }
+  function saveNotes(){ localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); }
+
+  let tickets = loadTickets();
+  let notes = loadNotes();
+
+  /* ---------------------------------------------------------
+     3) 캘린더 렌더링
+  --------------------------------------------------------- */
+  const grid = document.getElementById("calendarGrid");
+  const monthLabel = document.getElementById("monthLabel");
+  const today = new Date();
+  let viewYear = today.getFullYear();
+  let viewMonth = today.getMonth();
+
+  function fmtDate(y,m,d){
+    return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  }
+  function ticketsOn(dateStr){ return tickets.filter(t => t.date === dateStr); }
+
+  // 대한민국 공휴일(관공서의 공휴일에 관한 규정 기준, 대체공휴일 포함) — 2026년
+  // 설날·추석 연휴는 일요일과 겹칠 때만 대체공휴일이 생기고, 국경일·어린이날은 토요일과 겹쳐도 생긴다는
+  // 현행 규정에 따라 확정된 날짜만 반영했다. 근로자의 날(5/1)은 관공서 공휴일이 아니라 제외했다.
+  const HOLIDAYS_KR = {
+    "2026-01-01": "신정",
+    "2026-02-16": "설날 연휴",
+    "2026-02-17": "설날",
+    "2026-02-18": "설날 연휴",
+    "2026-03-01": "삼일절",
+    "2026-03-02": "대체공휴일",
+    "2026-05-05": "어린이날",
+    "2026-05-24": "부처님오신날",
+    "2026-05-25": "대체공휴일",
+    "2026-06-06": "현충일",
+    "2026-08-15": "광복절",
+    "2026-08-17": "대체공휴일",
+    "2026-09-24": "추석 연휴",
+    "2026-09-25": "추석",
+    "2026-09-26": "추석 연휴",
+    "2026-10-03": "개천절",
+    "2026-10-05": "대체공휴일",
+    "2026-10-09": "한글날",
+    "2026-12-25": "크리스마스"
+  };
+
+  function renderCalendar(){
+    grid.innerHTML = "";
+    monthLabel.textContent = `${viewYear}년 ${String(viewMonth+1).padStart(2,"0")}월`;
+
+    const firstOfMonth = new Date(viewYear, viewMonth, 1);
+    const startWeekday = firstOfMonth.getDay();
+    const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate();
+    const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+    const totalCells = Math.ceil((startWeekday + daysInMonth) / 7) * 7;
+
+    for(let i=0; i<totalCells; i++){
+      const dayNum = i - startWeekday + 1;
+      let cellYear = viewYear, cellMonth = viewMonth, cellDay, inMonth;
+
+      if(dayNum < 1){
+        inMonth = false;
+        cellDay = daysInPrevMonth + dayNum;
+        cellMonth = viewMonth === 0 ? 11 : viewMonth - 1;
+        cellYear = viewMonth === 0 ? viewYear - 1 : viewYear;
+      } else if(dayNum > daysInMonth){
+        inMonth = false;
+        cellDay = dayNum - daysInMonth;
+        cellMonth = viewMonth === 11 ? 0 : viewMonth + 1;
+        cellYear = viewMonth === 11 ? viewYear + 1 : viewYear;
+      } else {
+        inMonth = true;
+        cellDay = dayNum;
+      }
+
+      const dateStr = fmtDate(cellYear, cellMonth, cellDay);
+      const cell = document.createElement("div");
+      cell.className = `cell px-0.5 py-1 md:p-1.5 flex flex-col ${inMonth ? "in-month" : "out-month"}`;
+      cell.dataset.date = dateStr;
+
+      const isToday = inMonth && dateStr === fmtDate(today.getFullYear(), today.getMonth(), today.getDate());
+      const isSunday = i % 7 === 0;
+      const holidayName = HOLIDAYS_KR[dateStr];
+      const isHoliday = inMonth && !!holidayName;
+      const isRedDay = inMonth && (isSunday || isHoliday);
+
+      const dateLabel = document.createElement("div");
+      dateLabel.className = "flex items-center justify-between mb-1";
+      dateLabel.innerHTML = `
+        <span class="mono text-[10px] md:text-[11px] ${isToday ? "font-extrabold" : "font-medium"}"
+              style="${isToday ? `color:var(--pink-ink);background:var(--pink);border-radius:9999px;padding:1px 6px;` : isRedDay ? "color:var(--danger)" : inMonth ? "color:var(--ink)" : "color:#D3D6DA"}">
+          ${cellDay}
+        </span>
+        ${isHoliday ? `<span class="chip-line" style="font-size:6.5px; color:var(--danger); max-width:60%; text-align:right;">${holidayName}</span>` : ""}
+      `;
+      cell.appendChild(dateLabel);
+
+      const itemsWrap = document.createElement("div");
+      itemsWrap.className = "flex-1 flex flex-col gap-1 overflow-y-auto scrollbar-thin";
+      cell.appendChild(itemsWrap);
+
+      ticketsOn(dateStr).forEach(t => {
+        const chip = document.createElement("div");
+        chip.className = "ticket-chip text-[9px] md:text-[11px]";
+        chip.innerHTML = `
+          <div class="mono font-bold chip-line time-line">${t.depTime}${t.mode === "bus" ? '<span class="bus-tag">BUS</span>' : ""}</div>
+          <div class="route-line opacity-95">${t.dep}→${t.arr}</div>
+        `;
+        chip.addEventListener("click", (e) => { e.stopPropagation(); openDetail(t); });
+        itemsWrap.appendChild(chip);
+      });
+
+      if(notes[dateStr]) itemsWrap.appendChild(buildNoteChip(dateStr));
+
+      if(inMonth){
+        cell.addEventListener("dblclick", () => addNote(dateStr, itemsWrap));
+      }
+      grid.appendChild(cell);
+    }
+  }
+
+  function buildNoteChip(dateStr){
+    const chip = document.createElement("div");
+    chip.className = "note-chip text-[8px] md:text-[10px] font-semibold";
+    chip.innerHTML = `<div class="chip-line">예매필요</div><div class="note-x">×</div>`;
+    chip.addEventListener("click", (e) => { e.stopPropagation(); chip.classList.toggle("show-x"); });
+    chip.querySelector(".note-x").addEventListener("click", (e) => {
+      e.stopPropagation();
+      delete notes[dateStr]; saveNotes(); chip.remove();
+    });
+    return chip;
+  }
+  function addNote(dateStr, itemsWrap){
+    if(notes[dateStr]) return;
+    notes[dateStr] = true; saveNotes();
+    itemsWrap.appendChild(buildNoteChip(dateStr));
+  }
+
+  /* ---------------------------------------------------------
+     4) 상세 모달 (조회 / 수정·삭제 진입점)
+  --------------------------------------------------------- */
+  const detailModal = document.getElementById("detailModal");
+  let activeTicketId = null;
+
+  function openDetail(t){
+    activeTicketId = t.id;
+    const d = new Date(t.date + "T00:00:00");
+    const weekday = ["일","월","화","수","목","금","토"][d.getDay()];
+    document.getElementById("modalDate").textContent = `${t.date} (${weekday})`;
+    document.getElementById("modalTrain").textContent = t.train || "열차명 미상";
+    document.getElementById("modalDep").textContent = t.dep;
+    document.getElementById("modalArr").textContent = t.arr;
+    document.getElementById("modalDepTime").textContent = t.depTime;
+    document.getElementById("modalArrTime").textContent = t.arrTime || "-";
+    document.getElementById("modalSeat").textContent = t.seat || "-";
+    document.getElementById("modalSource").textContent = t.source || "-";
+    showModal(detailModal);
+  }
+  function closeDetail(){ hideModal(detailModal); }
+
+  document.getElementById("editTicketBtn").addEventListener("click", () => {
+    const t = tickets.find(x => x.id === activeTicketId);
+    if(!t) return;
+    closeDetail();
+    openForm(t);
+  });
+  document.getElementById("deleteTicketBtn").addEventListener("click", () => {
+    if(!confirm("이 일정을 삭제할까요?")) return;
+    tickets = tickets.filter(x => x.id !== activeTicketId);
+    saveTickets();
+    closeDetail();
+    renderCalendar();
+  });
+
+  /* ---------------------------------------------------------
+     5) 등록/수정 폼 모달
+  --------------------------------------------------------- */
+  const formModal = document.getElementById("formModal");
+  const ticketForm = document.getElementById("ticketForm");
+  const formTitle = document.getElementById("formTitle");
+  const tabButtons = formModal.querySelectorAll(".tab-btn");
+  const tabManual = document.getElementById("tabManual");
+  const tabUpload = document.getElementById("tabUpload");
+
+  function showModal(el){ el.classList.remove("hidden"); el.classList.add("flex"); }
+  function hideModal(el){ el.classList.add("hidden"); el.classList.remove("flex"); }
+
+  function switchTab(name){
+    tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    tabManual.classList.toggle("hidden", name !== "manual");
+    tabUpload.classList.toggle("hidden", name !== "upload");
+  }
+  tabButtons.forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+
+  function resetForm(){
+    ticketForm.reset();
+    document.getElementById("f_id").value = "";
+    document.getElementById("f_mode").value = "train";
+    document.getElementById("f_source").value = "수동입력";
+    resetUploadState();
+  }
+
+  function fillForm(t){
+    document.getElementById("f_id").value = t.id;
+    document.getElementById("f_mode").value = t.mode || "train";
+    document.getElementById("f_date").value = t.date || "";
+    document.getElementById("f_dep").value = t.dep || "";
+    document.getElementById("f_arr").value = t.arr || "";
+    document.getElementById("f_depTime").value = t.depTime || "";
+    document.getElementById("f_arrTime").value = t.arrTime || "";
+    document.getElementById("f_train").value = t.train || "";
+    document.getElementById("f_seat").value = t.seat || "";
+    document.getElementById("f_source").value = t.source || "수동입력";
+  }
+
+  function openForm(existingTicket, presetDate){
+    resetForm();
+    if(existingTicket){
+      formTitle.textContent = "일정 수정";
+      fillForm(existingTicket);
+      switchTab("manual");
+    } else {
+      formTitle.textContent = "일정 등록";
+      if(presetDate) document.getElementById("f_date").value = presetDate;
+      switchTab("upload");
+    }
+    showModal(formModal);
+  }
+  function closeForm(){ hideModal(formModal); }
+
+  document.getElementById("addTicketBtn").addEventListener("click", () => openForm(null));
+  document.querySelectorAll(".closeFormBtn").forEach(b => b.addEventListener("click", closeForm));
+  document.querySelectorAll(".closeModalBtn").forEach(b => b.addEventListener("click", closeDetail));
+
+  [detailModal, formModal].forEach(m => {
+    m.addEventListener("click", (e) => { if(e.target === m) hideModal(m); });
+  });
+  formModal.querySelector(".modal-panel").addEventListener("click", (e) => e.stopPropagation());
+  detailModal.querySelector(".modal-panel").addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("keydown", (e) => {
+    if(e.key !== "Escape") return;
+    hideModal(detailModal); hideModal(formModal);
+  });
+
+  ticketForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const id = document.getElementById("f_id").value;
+    const payload = {
+      id: id || `manual-${Date.now()}`,
+      date: document.getElementById("f_date").value,
+      dep: document.getElementById("f_dep").value.trim(),
+      arr: document.getElementById("f_arr").value.trim(),
+      depTime: document.getElementById("f_depTime").value,
+      arrTime: document.getElementById("f_arrTime").value,
+      train: document.getElementById("f_train").value.trim(),
+      seat: document.getElementById("f_seat").value.trim(),
+      mode: document.getElementById("f_mode").value || "train",
+      source: document.getElementById("f_source").value
+    };
+    if(!payload.date || !payload.dep || !payload.arr || !payload.depTime){
+      alert("날짜, 출발역, 도착역, 출발시각은 필수 입력 항목입니다.");
+      return;
+    }
+    if(id){
+      const idx = tickets.findIndex(x => x.id === id);
+      if(idx > -1) tickets[idx] = payload;
+    } else {
+      tickets.push(payload);
+    }
+    saveTickets();
+    closeForm();
+    viewYear = Number(payload.date.slice(0,4));
+    viewMonth = Number(payload.date.slice(5,7)) - 1;
+    renderCalendar();
+  });
+
+  /* ---------------------------------------------------------
+     6) 이미지 업로드 → OCR 자동 인식 (수동 입력과 분리된 탭)
+  --------------------------------------------------------- */
+  const dropZone = document.getElementById("dropZone");
+  const fileInput = document.getElementById("fileInput");
+  const previewImg = document.getElementById("previewImg");
+  const dropZoneIdle = document.getElementById("dropZoneIdle");
+  const recognizeBtn = document.getElementById("recognizeBtn");
+  const ocrProgress = document.getElementById("ocrProgress");
+  const ocrProgressFill = document.getElementById("ocrProgressFill");
+  const ocrStatus = document.getElementById("ocrStatus");
+
+  let selectedFile = null;
+
+  const ocrSummaryEl = document.getElementById("ocrSummary");
+  const uploadDoneActions = document.getElementById("uploadDoneActions");
+  const uploadDoneBtn = document.getElementById("uploadDoneBtn");
+  const retryRecognizeBtn = document.getElementById("retryRecognizeBtn");
+
+  function resetUploadState(){
+    selectedFile = null;
+    fileInput.value = "";
+    previewImg.src = "";
+    previewImg.classList.add("hidden");
+    dropZoneIdle.classList.remove("hidden");
+    recognizeBtn.disabled = true;
+    recognizeBtn.classList.remove("hidden");
+    ocrProgress.classList.add("hidden");
+    ocrProgressFill.style.width = "0%";
+    ocrSummaryEl.classList.add("hidden");
+    ocrSummaryEl.innerHTML = "";
+    uploadDoneActions.classList.add("hidden");
+  }
+
+  dropZone.addEventListener("click", () => fileInput.click());
+  dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener("change", (e) => {
+    if(e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  function handleFile(file){
+    if(!file.type.startsWith("image/")){
+      alert("이미지 파일만 업로드할 수 있습니다.");
+      return;
+    }
+    selectedFile = file;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      previewImg.src = ev.target.result;
+      previewImg.classList.remove("hidden");
+      dropZoneIdle.classList.add("hidden");
+    };
+    reader.readAsDataURL(file);
+    recognizeBtn.disabled = false;
+  }
+
+  // 역명 사전 기반 매칭 (OCR 텍스트에서 순서대로 등장하는 두 역을 출발/도착으로 추정)
+  const KNOWN_STATIONS = [
+    "서울","용산","영등포","안양","군포","의왕","수원","성환","직산","천안","봉명","두정",
+    "아산","배방","탕정","온양온천","신창","평택","서정리","진위","오산","병점","세류",
+    "지제","평택지제","천안아산","조치원","신탄진","부강","매포","심천","이원","영동",
+    "황간","추풍령","김천","김천구미","아포","구미","사곡","왜관","서대구","대구","동대구",
+    "경산","청도","밀양","삼랑진","원동","물금","구포","부산진","부산","오송","대전","서대전",
+    "계룡","논산","강경","함열","익산","전주","남원","곡성","구례구","순천","여천","여수엑스포",
+    "정읍","장성","광주송정","나주","다시","영산포","목포","진주","경주","포항","울산","태화강",
+    "마산","창원중앙","진영","수서","동탄","청량리","강릉","춘천","원주"
+  ];
+
+  function normalizeTime(t){
+    const [h,m] = t.split(/[:：]/);
+    return `${String(h).padStart(2,"0")}:${m}`;
+  }
+
+  const JOURNEY_PATTERN = /([가-힣]{2,8})\s*(\d{1,2}[:：]\d{2})\s*(?:→|->|-->|>|➜|~)\s*([가-힣]{2,8})\s*(\d{1,2}[:：]\d{2})/;
+  // 카드 하단의 '조회/발급 시각'(YYYY-MM-DD HH:MM:SS)은 승차권 한 건의 정보가 모두 끝나는
+  // 지점을 가장 정확히 표시하는 표식이라, 경계 후보 중 최우선으로 사용한다.
+  const TIMESTAMP_PATTERN = /\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}(:\d{2})?/g;
+  // 승차권 1건마다 반드시 등장하는 표식들을 경계 후보로 준비해둔다.
+  // 한 가지 라벨만 믿으면 그 라벨 자체가 OCR로 깨졌을 때 전체가 한 덩어리로 뭉쳐버리므로,
+  // 여러 후보 중 실제로 2건 이상 잡히는 첫 번째 패턴을 사용한다.
+  const TICKET_BOUNDARY_PATTERNS = [
+    TIMESTAMP_PATTERN,
+    /승\s*차\s*권\s*번\s*호[^\n]{0,40}/g,
+    /\d{1,2}\s?호\s?차[^\d]{0,6}\d{1,2}\s?[A-D]/g
+  ];
+
+  function isPlausibleYear(y){
+    const n = Number(y);
+    return n >= 2020 && n <= 2035;
+  }
+
+  // 날짜 인식: '이용일자' 라벨을 최우선으로 사용하고, 없으면 발행일시·승인일자·판매일자처럼
+  // 여정과 무관한 라벨이 붙은 날짜를 제외한 뒤 남은 첫 'YYYY년/월/일' 패턴을 사용한다.
+  // '월'·'일' 글자는 OCR로 다른 문자(예: E, 숫자 등)로 깨지는 경우가 많아, 정확한 한 글자를 요구하지 않고
+  // 숫자와 숫자 사이에 있는 짧은 구분자 정도로만 취급한다.
+  // 연도가 2020~2035 범위를 벗어나면(OCR 오인식) 건너뛰고 다음 후보를 찾는다.
+  function findPlausibleDate(segment){
+    const labelMatch = segment.match(/이용\s*일자[^\d]{0,15}(\d{4})[^\d]{0,3}(\d{1,2})[^\d]{0,3}(\d{1,2})/);
+    if(labelMatch && isPlausibleYear(labelMatch[1])){
+      return `${labelMatch[1]}-${String(labelMatch[2]).padStart(2,"0")}-${String(labelMatch[3]).padStart(2,"0")}`;
+    }
+    const stripped = segment
+      .replace(/발행\s*일시[^\n]*/g, "")
+      .replace(/승인\s*일자[^\n]*/g, "")
+      .replace(/판매\s*일자[^\n]*/g, "");
+    // 조회/캡처 시각처럼 'YYYY-MM-DD HH:MM' 형태로만 찍히는 값은 실제 이용일과 절대 겹치지 않으므로 제외.
+    // 단어 단위로 재구성된 텍스트는 숫자와 '년'/'월'/'일' 사이에도 공백이 낄 수 있어 [^\d]{0,3}로 관대하게 허용한다.
+    const candidates = [...stripped.matchAll(/(\d{4})\s*년[^\d]{0,3}(\d{1,2})[^\d]{0,3}(\d{1,2})[^\d]{0,3}/g)];
+    for(const m of candidates){
+      if(isPlausibleYear(m[1])){
+        return `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
+      }
+    }
+    // '년' 글자가 아예 사라지거나 바로 앞 숫자에 뭉개져 붙는 경우(예: '20264 09 월 30 일')를 대비한 폴백.
+    // '월'/'일'은 비교적 안정적으로 살아남는 경우가 많으므로 이 둘을 먼저 앵커로 찾고
+    // (숫자와 월/일 사이 공백도 허용), 그 앞쪽 텍스트에서 연도로 보이는 4자리 숫자만 별도로 찾는다.
+    const monthDayMatch = stripped.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+    if(monthDayMatch){
+      const before = stripped.slice(Math.max(0, monthDayMatch.index - 25), monthDayMatch.index);
+      const yearMatch = before.match(/\d{4}/);
+      if(yearMatch && isPlausibleYear(yearMatch[0])){
+        return `${yearMatch[0]}-${String(monthDayMatch[1]).padStart(2,"0")}-${String(monthDayMatch[2]).padStart(2,"0")}`;
+      }
+    }
+    return "";
+  }
+
+  function extractStationsAndTimes(segment, result){
+    const journeyMatch = segment.match(JOURNEY_PATTERN);
+    if(journeyMatch){
+      result.dep = journeyMatch[1];
+      result.depTime = normalizeTime(journeyMatch[2]);
+      result.arr = journeyMatch[3];
+      result.arrTime = normalizeTime(journeyMatch[4]);
+      return;
+    }
+    const times = [...segment.matchAll(/([01]?\d|2[0-3])[:：]([0-5]\d)/g)]
+      .map(m => normalizeTime(`${m[1]}:${m[2]}`));
+    if(times[0]) result.depTime = times[0];
+    if(times[1]) result.arrTime = times[1];
+
+    const found = [];
+    for(const s of KNOWN_STATIONS){
+      const idx = segment.indexOf(s);
+      if(idx !== -1) found.push({ s, idx });
+    }
+    found.sort((a,b) => a.idx - b.idx);
+    const uniqueStations = [...new Set(found.map(f => f.s))];
+    if(uniqueStations[0]) result.dep = uniqueStations[0];
+    if(uniqueStations[1]) result.arr = uniqueStations[1];
+  }
+
+  function extractTrain(segment, result){
+    const trainKeyword = /(KTX|SRT|ITX|새마을|무궁화|누리로|통근열차)/i;
+    const trainLabelMatch = segment.match(/열차\s*정보[^\S\n]*[:：]?\s*([^\n]{2,20})/);
+    if(trainLabelMatch && trainKeyword.test(trainLabelMatch[1])){
+      result.train = trainLabelMatch[1].trim();
+      return;
+    }
+    const trainMatch = segment.match(/(KTX[-\s]?산천|KTX[-\s]?이음|SRT|ITX[-\s]?새마을|무궁화|누리로|통근열차|KTX)\s?호?\s?(\d{2,4})?/i);
+    if(trainMatch){
+      result.train = `${trainMatch[1].replace(/\s+/g,"-").replace(/--+/g,"-")}${trainMatch[2] ? " "+trainMatch[2] : ""}`.trim();
+    }
+  }
+
+  function extractSeat(segment, result){
+    const seatMatch = segment.match(/(\d{1,2}\s?호\s?차)[^\d]{0,6}(\d{1,2}\s?[A-D])/);
+    if(seatMatch){
+      result.seat = `${seatMatch[1].replace(/\s/g,"")} ${seatMatch[2].replace(/\s/g,"")}`;
+      return;
+    }
+    const seatLabelMatch = segment.match(/좌석\s*정보[^\S\n]*[:：]?\s*([^\n]{1,10})/);
+    if(seatLabelMatch) result.seat = seatLabelMatch[1].trim();
+  }
+
+  // 승차권 1건을 통째로 파싱 (영수증·앱 캡처 카드 형식 공통 진입점)
+  function parseTicketSegment(segment){
+    const result = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
+    // 경계로는 타임스탬프를 활용하되, 실제 날짜·시각 추출 시에는 조회 시각이 섞이지 않도록 제거
+    const cleaned = segment.replace(TIMESTAMP_PATTERN, "");
+    result.date = findPlausibleDate(cleaned);
+    extractStationsAndTimes(cleaned, result);
+    extractTrain(cleaned, result);
+    extractSeat(cleaned, result);
+    return result;
+  }
+
+  // 버스표는 '승차홈'/'운행회사'/'예상소요시간' 같은 버스 전용 라벨로 기차표와 구분한다
+  function isBusTicketText(text){
+    return /승차홈|운행회사|예상소요시간/.test(text);
+  }
+
+  // 버스표는 도착시간이 없고 항목 순서(부가 경유줄 유무 등)도 매번 달라질 수 있어,
+  // 고정 줄 위치 대신 라벨(출발/도착/시간/좌석번호) 자체를 기준으로 해당 줄을 찾아 값을 읽는다.
+  // 기차의 '내용-신호 기반 역추적'과 같은 원리 — 부가줄이 몇 줄 끼든 안전하다.
+  // 승차권 번호 줄 바로 아래에서, 줄 끝이 화살표 아이콘(오인식되면 '*' 등으로 나타남)으로 끝나는 줄을
+  // 순서대로 출발/도착 후보로 삼는다. '출발'/'도착' 라벨 자체가 깨져도 값의 위치(순서)만으로 찾을 수 있다.
+  // 한글이 하나도 없으면(값 자체가 다른 글자로 오인식된 경우) 오인식으로 보고 비워둔다.
+  function extractBusDepArrByMarker(lines, startIdx){
+    const results = ["", ""];
+    let slot = 0;
+    const skipLabel = /(출발일|시간|예상소요시간|승차홈|운행회사|좌석번호|등급|해당\s*승차권)/;
+    for(let i = startIdx; i < Math.min(lines.length, startIdx + 6) && slot < 2; i++){
+      const line = lines[i];
+      if(!line) continue;
+      if(/^\d/.test(line)) continue; // 숫자로 시작하는 줄(승차권 번호 이어짐 등)은 후보에서 제외
+      if(skipLabel.test(line)) continue; // 다른 라벨이 섞인 줄도 제외
+      // 이 줄이 출발/도착 슬롯을 차지한다. 값이 한글로 시작하지 않으면(예: 'HEAL', 아이콘 오인식)
+      // 통째로 오인식된 것으로 보고 해당 슬롯만 비워둔다 — 뒤 슬롯의 순서는 그대로 유지된다.
+      const m = line.match(/^([가-힣][가-힣()·・•‧∙a-zA-Z0-9]{0,17})/);
+      results[slot] = m ? m[1].trim() : "";
+      slot++;
+    }
+    return { dep: results[0], arr: results[1] };
+  }
+
+  function parseBusTicketText(text){
+    const result = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
+    const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+
+    // 날짜: '출발일' 라벨이 깨지는 경우가 잦아, 라벨 유무와 무관하게 'YYYY.MM.DD' 형태 자체를 먼저 찾는다
+    // 날짜: 승차권 번호 안의 숫자 조합이 우연히 비슷한 패턴을 만들 수 있어(예: '0400-60-3479'),
+    // 첫 매칭만 보지 않고 연도가 그럴듯한(2020~2035) 후보를 찾을 때까지 계속 확인한다
+    const dateCandidates = [...text.matchAll(/(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/g)];
+    for(const m of dateCandidates){
+      if(isPlausibleYear(m[1])){
+        result.date = `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
+        break;
+      }
+    }
+
+    for(const line of lines){
+      if(!result.depTime){
+        const m = line.match(/^시간[^\S\n]*[:：]?[^\S\n]*(\d{1,2}[:：]\d{2})/);
+        if(m) result.depTime = normalizeTime(m[1]);
+      }
+      if(!result.dep){
+        const m = line.match(/^출발(?!\s*일)[^\S\n]*[:：]?[^\S\n]*([가-힣()·・•‧∙a-zA-Z0-9]{1,18})/);
+        if(m) result.dep = m[1].trim();
+      }
+      if(!result.arr){
+        const m = line.match(/^도착(?!\s*지)[^\S\n]*[:：]?[^\S\n]*([가-힣()·・•‧∙a-zA-Z0-9]{1,18})/);
+        if(m) result.arr = m[1].trim();
+      }
+      if(!result.seat){
+        const m = line.match(/좌석\s*번호[^\S\n]*[:：]?[^\S\n]*(\S{1,6})/);
+        if(m) result.seat = m[1].trim();
+      }
+    }
+
+    if(!result.dep || !result.arr){
+      const ticketLineIdx = lines.findIndex(t => /\d{8}-[\d-]{3,20}/.test(t));
+      if(ticketLineIdx >= 0){
+        const marker = extractBusDepArrByMarker(lines, ticketLineIdx + 1);
+        if(!result.dep && marker.dep) result.dep = marker.dep;
+        if(!result.arr && marker.arr) result.arr = marker.arr;
+      }
+    }
+
+    return result;
+  }
+
+  // 여러 경계 후보 중 실제로 2건 이상 나오는 첫 패턴을 골라 승차권 단위 구간으로 분리
+  function splitIntoTicketSegments(workText){
+    let matches = null;
+    for(const pattern of TICKET_BOUNDARY_PATTERNS){
+      const found = [...workText.matchAll(pattern)];
+      if(found.length >= 2){
+        matches = found;
+        break;
+      }
+    }
+    if(!matches){
+      return [workText];
+    }
+    const segments = [];
+    let start = 0;
+    for(const m of matches){
+      const end = m.index + m[0].length;
+      segments.push(workText.slice(start, end));
+      start = end;
+    }
+    if(start < workText.length){
+      segments[segments.length - 1] += workText.slice(start);
+    }
+    return segments;
+  }
+
+  // 같은 줄(y좌표)에 찍힌 단어끼리 묶어 왼쪽→오른쪽으로 정렬한 뒤, 줄바꿈으로 이어붙여 텍스트를 재구성한다.
+  // 단순히 y0로만 정렬하면 같은 줄 안에서도 미세한 y값 차이로 순서가 흐트러질 수 있어,
+  // 줄 단위로 먼저 묶는 편이 원래 격자 레이아웃을 더 안정적으로 보존한다.
+  // 단어들을 같은 y좌표(줄)끼리 묶는다
+  function groupWordsIntoLines(words){
+    if(!words.length) return [];
+    const sorted = [...words].sort((a, b) => a.bbox.y0 - b.bbox.y0);
+    const lines = [];
+    let currentLine = [sorted[0]];
+    let currentY = sorted[0].bbox.y0;
+    for(let i = 1; i < sorted.length; i++){
+      const w = sorted[i];
+      if(Math.abs(w.bbox.y0 - currentY) <= 12){
+        currentLine.push(w);
+      } else {
+        lines.push(currentLine);
+        currentLine = [w];
+        currentY = w.bbox.y0;
+      }
+    }
+    lines.push(currentLine);
+    return lines;
+  }
+
+  // 한 줄의 단어들을 왼쪽→오른쪽으로 이어붙여 텍스트로 만든다. 글자 높이 대비 간격이 좁으면
+  // (한글이 글자 단위로 쪼개져 인식된 경우) 공백 없이 붙이고, 넓으면(서로 다른 항목/칸인 경우) 공백을 넣는다.
+  function lineToText(line){
+    const sortedLine = line.slice().sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    let text = sortedLine[0].text;
+    for(let i = 1; i < sortedLine.length; i++){
+      const prev = sortedLine[i - 1];
+      const cur = sortedLine[i];
+      const gap = cur.bbox.x0 - prev.bbox.x1;
+      const heightRef = Math.max(prev.bbox.y1 - prev.bbox.y0, 8);
+      text += (gap > heightRef * 0.4 ? " " : "") + cur.text;
+    }
+    return text;
+  }
+
+  function reconstructTextFromWords(words){
+    if(!words.length) return "";
+    return groupWordsIntoLines(words).map(lineToText).join("\n");
+  }
+
+  // 주어진 패턴에 매칭되는 단어들의 y좌표를 모아, 같은 줄로 볼 수 있는(20px 이내) 값은 하나로 합친다
+  function collectMarkerYs(words, pattern){
+    const ys = [];
+    words
+      .filter(w => w.text && pattern.test(w.text))
+      .map(w => w.bbox && w.bbox.y0)
+      .filter(y => typeof y === "number")
+      .sort((a, b) => a - b)
+      .forEach(y => {
+        if(ys.length === 0 || y - ys[ys.length - 1] > 20){
+          ys.push(y);
+        }
+      });
+    return ys;
+  }
+
+  // Tesseract가 반환하는 단어별 좌표(bbox)를 이용해 승차권 카드 단위로 텍스트를 재구성한다.
+  // '웹티켓' 문구는 한글 여러 글자가 붙어 있어 OCR로 깨지기 쉬운 반면, 카드 하단의 '예매일시'
+  // 타임스탬프(YYYY-MM-DD HH:MM:SS)는 숫자 위주라 훨씬 안정적으로 인식된다. 그래서 이 타임스탬프의
+  // y좌표를 기준점으로 삼아, '직전 타임스탬프 바로 다음'부터 '이번 타임스탬프'까지를 카드 1건으로 묶는다.
+  // 이렇게 하면 맨 처음 구간은 자동으로 '이미지 최상단부터 첫 타임스탬프까지'를 전부 포함하게 되어,
+  // 첫 번째 카드의 '웹티켓' 인식 성공 여부와 무관하게 그 위쪽 내용을 놓치지 않는다.
+  // 영수증 형태는 항목 순서가 항상 고정되어 있다
+  // (상품유형 → 이용일자 → 여정정보 → 열차정보 → 좌석 정보 → 매수정보 → 승차권 번호 → 발행 일시).
+  // 한글 라벨(이용일자 등)은 OCR로 깨지기 쉬운 반면, 승차권 번호는 'NNNNN-NNNN-NNNNN-NN' 형태의
+  // 숫자 패턴이라 훨씬 안정적으로 인식된다. 그래서 라벨 텍스트를 찾는 대신, 승차권 번호가 있는 줄을
+  // 기준점으로 삼아 정확히 몇 줄 위에 어떤 값이 있는지(격자 위치)로 바로 값을 읽어온다.
+  const TICKET_NUMBER_LINE_PATTERN = /\d{4,6}[\-\s]\d{3,5}[\-\s]\d{4,6}[\-\s]\d{2,3}/;
+
+  // 버스 승차권(고속/시외버스 티켓)은 QR 코드 바로 아래에 'YYYYMMDD-NNNN-NN-NNNN(-NN)' 형태의
+  // 번호가 찍혀 있다. 앞 8자리가 날짜 형태이지만 실제 출발일과는 무관한(발급 코드성) 값이라
+  // 날짜 추출용으로는 쓰지 않고, 오직 '이 줄이 버스 승차권 번호 줄이다'라는 기준점으로만 사용한다.
+  const BUS_ANCHOR_PATTERN = /\d{8}[\-\s]\d{3,4}[\-\s]\d{2,3}[\-\s]\d{3,4}/;
+  // 버스 티켓의 날짜는 기차(YYYY년 MM월 DD일)와 달리 'YYYY.MM.DD' 점(.) 구분 형식으로 찍힌다.
+  const BUS_DATE_PATTERN = /(\d{4})\.(\d{1,2})\.(\d{1,2})/;
+
+  // 버스 승차권은 기차와 레이아웃이 전혀 달라 별도로 추출한다. 도착시간이 없고(출발시간만 존재),
+  // '출발 OOO', '도착 OOO', '출발일 YYYY.MM.DD', '시간 HH:MM  좌석번호 NN' 형태로 라벨과 값이
+  // 같은 줄에 붙어 있으므로, 버스 번호 줄을 기준점으로 그 아래쪽을 훑으며 라벨 뒤 텍스트를 그대로 읽는다.
+  function extractBusTicket(ocrData){
+    try{
+      const words = ocrData && ocrData.words;
+      if(!Array.isArray(words) || words.length === 0) return null;
+
+      const lineTexts = groupWordsIntoLines(words).map(lineToText);
+      const anchorIdx = lineTexts.findIndex(t => BUS_ANCHOR_PATTERN.test(t));
+      if(anchorIdx < 0) return null;
+
+      const result = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"", mode:"bus" };
+      let timeIdx = -1;
+      const searchCeil = Math.min(lineTexts.length, anchorIdx + 14);
+
+      for(let i = anchorIdx + 1; i < searchCeil; i++){
+        const line = lineTexts[i] || "";
+        if(!result.dep){
+          const m = line.match(/출발(?!일)[^가-힣0-9]*([가-힣()·・0-9\s]{2,14})/);
+          if(m) result.dep = m[1].trim();
+        }
+        if(!result.arr){
+          const m = line.match(/도착[^가-힣0-9]*([가-힣()·・0-9\s]{2,14})/);
+          if(m) result.arr = m[1].trim();
+        }
+        if(!result.date){
+          const m = line.match(BUS_DATE_PATTERN);
+          if(m) result.date = `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
+        }
+        if(timeIdx === -1 && /\d{1,2}[:：]\d{2}/.test(line) && !BUS_DATE_PATTERN.test(line)){
+          timeIdx = i;
+        }
+      }
+
+      if(timeIdx >= 0){
+        const line = lineTexts[timeIdx];
+        const tm = line.match(/(\d{1,2})[:：](\d{2})/);
+        if(tm) result.depTime = `${String(tm[1]).padStart(2,"0")}:${tm[2]}`;
+        const sm = line.match(/좌석\s*번호\D{0,6}(\d{1,3})/);
+        if(sm) result.seat = sm[1];
+      }
+
+      if(!result.dep && !result.arr && !result.date && !result.depTime) return null;
+      return result;
+    }catch(e){
+      console.warn("버스 승차권 추출 실패", e);
+      return null;
+    }
+  }
+
+  function extractByTicketNumberAnchor(ocrData){
+    try{
+      const words = ocrData && ocrData.words;
+      if(!Array.isArray(words) || words.length === 0) return null;
+
+      const lines = groupWordsIntoLines(words);
+      const lineTexts = lines.map(lineToText);
+
+      const ticketLineIdx = lineTexts.findIndex(t => TICKET_NUMBER_LINE_PATTERN.test(t));
+      if(ticketLineIdx < 0) return null;
+
+      const result = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
+      const dateLine = lineTexts[ticketLineIdx - 5] || "";
+      const journeyLine = lineTexts[ticketLineIdx - 4] || "";
+      const trainLine = lineTexts[ticketLineIdx - 3] || "";
+      const seatLine = lineTexts[ticketLineIdx - 2] || "";
+
+      result.date = findPlausibleDate(dateLine);
+      extractStationsAndTimes(journeyLine, result);
+      extractTrain(trainLine, result);
+      extractSeat(seatLine, result);
+      // 열차명 줄에서 못 찾았다면(짧은 라벨만 깨져 남은 경우 등) 좌석 줄까지 함께 봐서 보완
+      if(!result.train) extractTrain(trainLine + " " + seatLine, result);
+
+      return result;
+    }catch(e){
+      console.warn("승차권 번호 기준 좌표 추출 실패", e);
+      return null;
+    }
+  }
+
+  // 앱 캡처 카드(승차권 여러 건) 형식은 영수증과 달리 카드마다 줄 수가 다를 수 있다
+  // (예: '두 열차 간 이동 불가' 경고 배너가 있는 카드/없는 카드). 그래서 고정된 줄 오프셋 대신,
+  // 승차권 번호 줄에서 위로 거슬러 올라가며 각 항목의 '내용 신호'(시각 패턴, 열차명 키워드 등)로
+  // 해당 줄을 찾는다. 역명 줄은 항상 시각 줄 바로 위라는 구조만 고정으로 가정한다.
+  function extractByTicketNumberAnchorCard(words){
+    try{
+      if(!Array.isArray(words) || words.length === 0) return null;
+
+      const lineTexts = groupWordsIntoLines(words).map(lineToText);
+      const ticketLineIdx = lineTexts.findIndex(t => TICKET_NUMBER_LINE_PATTERN.test(t));
+      if(ticketLineIdx < 0) return null;
+
+      const result = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
+      const trainKeyword = /(KTX|SRT|ITX|무궁화|새마을|누리로|통근열차)/i;
+      const timePattern = /\d{1,2}[:：]\d{2}/;
+      const timestampPattern = /\d{4}-\d{1,2}-\d{1,2}/;
+
+      let trainIdx = -1, timeIdx = -1, dateIdx = -1;
+      const searchFloor = Math.max(0, ticketLineIdx - 10);
+      for(let i = ticketLineIdx - 1; i >= searchFloor; i--){
+        const line = lineTexts[i] || "";
+        if(trainIdx === -1 && trainKeyword.test(line)) trainIdx = i;
+        if(timeIdx === -1 && timePattern.test(line) && !timestampPattern.test(line)) timeIdx = i;
+        if(dateIdx === -1 && findPlausibleDate(line)) dateIdx = i;
+      }
+
+      if(dateIdx >= 0) result.date = findPlausibleDate(lineTexts[dateIdx]);
+      if(timeIdx >= 0){
+        const stationLine = lineTexts[timeIdx - 1] || "";
+        extractStationsAndTimes(`${stationLine} ${lineTexts[timeIdx]}`, result);
+      }
+      if(trainIdx >= 0) extractTrain(lineTexts[trainIdx], result);
+
+      // 좌석: 열차명 줄 아래 ~ 승차권번호 줄 사이에서 'N호차' 패턴이 있는 줄을 찾는다
+      const seatStart = trainIdx >= 0 ? trainIdx + 1 : Math.max(0, ticketLineIdx - 4);
+      for(let i = seatStart; i < ticketLineIdx; i++){
+        if(lineTexts[i] && /호\s?차/.test(lineTexts[i])){
+          extractSeat(lineTexts[i], result);
+          if(result.seat) break;
+        }
+      }
+
+      return result;
+    }catch(e){
+      console.warn("카드형 승차권 번호 기준 좌표 추출 실패", e);
+      return null;
+    }
+  }
+
+  function segmentByLayout(ocrData){
+    try{
+      const words = ocrData && ocrData.words;
+      if(!Array.isArray(words) || words.length === 0) return null;
+
+      const timestampYs = collectMarkerYs(words, /\d{4}-\d{1,2}-\d{1,2}/);
+
+      if(timestampYs.length >= 2){
+        return timestampYs.map((y, i) => {
+          const yStart = i === 0 ? 0 : timestampYs[i - 1] + 20;
+          const yEnd = y + 30;
+          const wordsInRange = words.filter(w => w.bbox && w.bbox.y0 >= yStart && w.bbox.y0 < yEnd);
+          return { text: reconstructTextFromWords(wordsInRange), yStart, yEnd, words: wordsInRange };
+        });
+      }
+
+      // 타임스탬프를 2건 이상 찾지 못한 경우에만 '웹티켓' 시작선 기준 방식으로 대체
+      const startYs = collectMarkerYs(words, /웹|티켓/);
+      if(startYs.length < 2) return null;
+
+      const boundaries = startYs.map((y, i) => {
+        const nextStart = startYs[i + 1];
+        const nextTimestamp = timestampYs.find(ty => ty > y + 20 && (!nextStart || ty < nextStart));
+        if(nextTimestamp) return nextTimestamp + 20;
+        return nextStart ? (y + nextStart) / 2 : Infinity;
+      });
+
+      return startYs.map((y, i) => {
+        const yStart = i === 0 ? 0 : boundaries[i - 1];
+        const yEnd = boundaries[i];
+        const wordsInRange = words.filter(w => w.bbox && w.bbox.y0 >= yStart && w.bbox.y0 < yEnd);
+        return { text: reconstructTextFromWords(wordsInRange), yStart, yEnd, words: wordsInRange };
+      });
+    }catch(e){
+      console.warn("좌표 기반 구간 분리에 실패해 텍스트 기반 방식으로 대체합니다.", e);
+      return null;
+    }
+  }
+
+  // 실제로 어떤 방식(좌표 기반/텍스트 기반)으로, 어떤 구간 텍스트가 만들어졌는지까지 함께 반환한다.
+  // (진단 화면에서 '진짜 파싱에 쓰인 텍스트'를 그대로 보여주기 위한 용도이자, 재시도 크롭의 좌표 소스)
+  // 각 구간은 { text, yStart, yEnd } 형태. 텍스트 기반 분리는 좌표가 없으므로 yStart/yEnd는 null.
+  function getTicketSegments(text, ocrData){
+    const cutIdx = text.search(/결제\s*정보|판매자\s*정보/);
+    const workText = cutIdx > -1 ? text.slice(0, cutIdx) : text;
+
+    if(ocrData){
+      const layoutSegments = segmentByLayout(ocrData);
+      if(layoutSegments && layoutSegments.length >= 2){
+        return { segments: layoutSegments, method: "좌표 기반(웹티켓/타임스탬프)" };
+      }
+    }
+
+    const segments = splitIntoTicketSegments(workText).map(t => ({ text: t, yStart: null, yEnd: null }));
+    return { segments, method: segments.length >= 2 ? "텍스트 기반(라벨 경계)" : "단일 구간(전체 텍스트)" };
+  }
+
+  // 이미지 한 장에 담긴 승차권을 모두 찾아 배열로 반환 (1건이면 길이 1인 배열)
+  // ocrData가 있으면 좌표 기반 분리를 최우선으로 시도하고, 실패하면 텍스트 기반 분리로 대체한다
+  function parseOcrTextMulti(text, ocrData){
+    const { segments } = getTicketSegments(text, ocrData);
+    return segments.map(seg => parseTicketSegment(seg.text));
+  }
+
+  // 사진 촬영본처럼 화질이 낮은 이미지의 OCR 정확도를 높이기 위한 전처리
+  // (그레이스케일 변환 + 확대 + 이진화로 흐릿함·반사광 노이즈를 줄인다)
+  function preprocessImage(file){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = img.width < 900 ? 1.8 : 1.3;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        try{
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const d = imgData.data;
+          // 하드 이진화는 글자의 부드러운 경계(안티에일리어싱)를 뭉개 오히려 인식률을 떨어뜨릴 수 있어,
+          // 그레이스케일 + 완만한 대비 강화만 적용한다 (색 단계를 유지하면서 흐릿함만 보완)
+          for(let i=0; i<d.length; i+=4){
+            const gray = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+            const contrasted = Math.min(255, Math.max(0, (gray-128)*1.25 + 128));
+            d[i] = d[i+1] = d[i+2] = contrasted;
+          }
+          ctx.putImageData(imgData, 0, 0);
+        }catch(e){
+          console.warn("이미지 전처리를 건너뜁니다.", e);
+        }
+        resolve(canvas);
+      };
+      img.onerror = () => reject(new Error("이미지를 불러오지 못했습니다."));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // preprocessImage가 실패했을 때도 이후 영역 재크롭이 가능하도록, 가공 없이 그대로 캔버스로 옮겨준다
+  function loadPlainCanvas(file){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.getContext("2d").drawImage(img, 0, 0);
+        resolve(canvas);
+      };
+      img.onerror = () => reject(new Error("이미지를 불러오지 못했습니다."));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // 승차권 1건의 y좌표 구간만 원본에서 다시 잘라 더 크게 확대한 뒤 재인식한다.
+  // 역명 등 특정 항목만 비었을 때, 전체를 다시 읽는 대신 그 부분만 집중적으로 다시 시도하는 용도.
+  async function reOcrRegion(baseCanvas, yStart, yEnd, worker){
+    const y0 = Math.max(0, Math.floor(yStart));
+    const y1 = Math.min(baseCanvas.height, Math.ceil(yEnd));
+    const height = Math.max(20, y1 - y0);
+    const scale = 2.2;
+    const crop = document.createElement("canvas");
+    crop.width = Math.round(baseCanvas.width * scale);
+    crop.height = Math.round(height * scale);
+    const ctx = crop.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(baseCanvas, 0, y0, baseCanvas.width, height, 0, 0, crop.width, crop.height);
+    const { data } = await worker.recognize(crop);
+    return data.text || "";
+  }
+
+  // 버스 출발지가 계속 다른 글자로 오인식될 때의 최후 수단: 페이지 전체를 다시 읽는 대신,
+  // 승차권 번호 바로 다음 줄(출발지가 있는 자리)의 좌표만 정확히 잘라 4배로 크게 확대한 뒤
+  // 그 한 줄만 별도로(PSM7: 한 줄짜리 텍스트로 가정) 인식한다.
+  async function reOcrBusDepLine(baseCanvas, wordsData, worker){
+    try{
+      const words = wordsData && wordsData.words;
+      if(!Array.isArray(words) || !words.length) return "";
+      const lines = groupWordsIntoLines(words);
+      const lineTexts = lines.map(lineToText);
+      const anchorIdx = lineTexts.findIndex(t => /\d{8}[\-\s][\d-]{3,20}/.test(t));
+      if(anchorIdx < 0) return "";
+
+      for(let i = anchorIdx + 1; i < Math.min(lines.length, anchorIdx + 6); i++){
+        if(/^\d/.test(lineTexts[i])) continue;
+        const lineWords = lines[i];
+        if(!lineWords.length) continue;
+        const y0 = Math.min(...lineWords.map(w => w.bbox.y0));
+        const y1 = Math.max(...lineWords.map(w => w.bbox.y1));
+        const pad = Math.round((y1 - y0) * 0.6);
+        const cropY0 = Math.max(0, y0 - pad);
+        const cropY1 = Math.min(baseCanvas.height, y1 + pad);
+        const scale = 4;
+        const crop = document.createElement("canvas");
+        crop.width = Math.round(baseCanvas.width * scale);
+        crop.height = Math.round((cropY1 - cropY0) * scale);
+        const ctx = crop.getContext("2d");
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(baseCanvas, 0, cropY0, baseCanvas.width, cropY1 - cropY0, 0, 0, crop.width, crop.height);
+        await worker.setParameters({ tessedit_pageseg_mode: "7" });
+        const r = await worker.recognize(crop);
+        const t = (r.data.text || "").trim();
+        // 확대되면서 '출발' 라벨 글자가 함께 잡힐 수 있다 — 라벨 자체를 값으로 쓰지 않도록 건너뛴다
+        const stripped = t.replace(/^[○◯•·]?\s*(출발|도착)\s*[:：]?\s*/, "");
+        const m = stripped.match(/[가-힣][가-힣()·・•‧∙a-zA-Z0-9]{0,17}/);
+        if(m && m[0] !== "출발" && m[0] !== "도착") return m[0];
+        // 라벨을 걷어냈는데도 값이 없다면(라벨만 인식된 경우), 원문에서 라벨 뒤쪽을 다시 탐색
+        const afterLabel = t.match(/(?:출발|도착)\s*[:：]?\s*([가-힣][가-힣()·・•‧∙a-zA-Z0-9]{0,17})/);
+        return afterLabel ? afterLabel[1] : "";
+      }
+      return "";
+    }catch(e){
+      console.warn("출발지 줄 확대 재인식 실패", e);
+      return "";
+    }
+  }
+
+  async function runRecognition(){
+    if(!selectedFile) return;
+    if(typeof Tesseract === "undefined"){
+      ocrStatus.textContent = "OCR 라이브러리를 불러오지 못했습니다. 네트워크 연결을 확인하거나 직접 입력을 이용해주세요.";
+      ocrProgress.classList.remove("hidden");
+      ocrProgressFill.style.width = "0%";
+      return;
+    }
+    recognizeBtn.disabled = true;
+    retryRecognizeBtn.disabled = true;
+    ocrProgress.classList.remove("hidden");
+    ocrSummaryEl.classList.add("hidden");
+    ocrSummaryEl.innerHTML = "";
+    uploadDoneActions.classList.add("hidden");
+    ocrStatus.textContent = "이미지 분석 준비 중...";
+    ocrProgressFill.style.width = "0%";
+
+    try{
+      let ocrInput;
+      try{
+        ocrInput = await preprocessImage(selectedFile);
+      }catch(e){
+        console.warn("이미지 전처리 실패, 가공 없이 인식합니다.", e);
+        ocrInput = await loadPlainCanvas(selectedFile);
+      }
+
+      // 이 승차권 화면은 큰 역명, 중간 크기 시각, 작은 라벨이 세로로 섞여 있는 '단일 컬럼, 다양한 글자 크기'
+      // 레이아웃이다. 기본 자동 분석 모드(PSM 3)는 이런 화면에서 큰 굵은 글씨 역명을 통째로 놓치는 경우가
+      // 있어, worker를 직접 만들어 PSM 4(가변 크기의 단일 컬럼 텍스트로 가정)로 설정해 인식을 시도한다.
+      const worker = await Tesseract.createWorker("kor+eng", 1, {
+        logger: (m) => {
+          if(m.status){
+            ocrStatus.textContent = `${m.status} ${m.progress ? Math.round(m.progress*100)+"%" : ""}`;
+          }
+          if(typeof m.progress === "number"){
+            ocrProgressFill.style.width = `${Math.round(m.progress*100)}%`;
+          }
+        }
+      });
+
+      let data, usedSegments, segmentMethod, parsedList;
+      try{
+        await worker.setParameters({ tessedit_pageseg_mode: "4" });
+        const result = await worker.recognize(ocrInput);
+        data = result.data;
+
+        ({ segments: usedSegments, method: segmentMethod } = getTicketSegments(data.text || "", data));
+        parsedList = usedSegments.map(seg => {
+          if(isBusTicketText(seg.text)){
+            const r = parseBusTicketText(seg.text);
+            r.mode = "bus";
+            return r;
+          }
+          const r = parseTicketSegment(seg.text);
+          r.mode = "train";
+          return r;
+        });
+
+        // 영수증처럼 승차권이 1건뿐인 경우: 라벨 텍스트 대신 승차권 번호(숫자 패턴)를 기준점으로 삼아
+        // 고정된 항목 순서에 따라 값을 다시 읽어와, 라벨이 깨져서 놓친 항목을 보완한다.
+        // (버스표는 항목 구조가 달라 이 보강은 기차 세그먼트에만 적용한다)
+        if(parsedList.length === 1 && parsedList[0].mode !== "bus"){
+          const anchorResult = extractByTicketNumberAnchor(data);
+          if(anchorResult){
+            const p = parsedList[0];
+            if(!p.date && anchorResult.date) p.date = anchorResult.date;
+            if(!p.dep && anchorResult.dep) p.dep = anchorResult.dep;
+            if(!p.arr && anchorResult.arr) p.arr = anchorResult.arr;
+            if(!p.depTime && anchorResult.depTime) p.depTime = anchorResult.depTime;
+            if(!p.arrTime && anchorResult.arrTime) p.arrTime = anchorResult.arrTime;
+            if(!p.train && anchorResult.train) p.train = anchorResult.train;
+            if(!p.seat && anchorResult.seat) p.seat = anchorResult.seat;
+          }
+        } else if(parsedList.length > 1){
+          // 앱 캡처 카드(승차권 여러 건)는 카드마다 줄 수가 다를 수 있어, 구간별로 내용-신호 기반
+          // 앵커 추출을 각각 시도해 빈 항목만 보완한다.
+          for(let i = 0; i < parsedList.length; i++){
+            if(parsedList[i].mode === "bus") continue;
+            const seg = usedSegments[i];
+            if(!seg.words || !seg.words.length) continue;
+            const p = parsedList[i];
+            const anchorResult = extractByTicketNumberAnchorCard(seg.words);
+            if(!anchorResult) continue;
+            if(!p.date && anchorResult.date) p.date = anchorResult.date;
+            if(!p.dep && anchorResult.dep) p.dep = anchorResult.dep;
+            if(!p.arr && anchorResult.arr) p.arr = anchorResult.arr;
+            if(!p.depTime && anchorResult.depTime) p.depTime = anchorResult.depTime;
+            if(!p.arrTime && anchorResult.arrTime) p.arrTime = anchorResult.arrTime;
+            if(!p.train && anchorResult.train) p.train = anchorResult.train;
+            if(!p.seat && anchorResult.seat) p.seat = anchorResult.seat;
+          }
+        }
+
+        // 출발역/도착역 중 하나라도 비어 있고 좌표 정보가 있으면, 그 승차권 구간만 원본에서 다시 잘라
+        // 더 크게 확대한 뒤 한 번 더 인식을 시도해 빈 항목을 보완한다. (버스표는 형식이 달라 제외)
+        const needsRetry = parsedList.some((p, i) => p.mode !== "bus" && (!p.dep || !p.arr) && usedSegments[i].yStart != null);
+        if(needsRetry){
+          ocrStatus.textContent = "누락된 항목 재시도 중...";
+          for(let i = 0; i < parsedList.length; i++){
+            const parsed = parsedList[i];
+            const seg = usedSegments[i];
+            if(parsed.mode !== "bus" && (!parsed.dep || !parsed.arr) && seg.yStart != null && seg.yEnd != null){
+              try{
+                const retryText = await reOcrRegion(ocrInput, seg.yStart, seg.yEnd, worker);
+                const retryResult = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
+                extractStationsAndTimes(retryText, retryResult);
+                extractTrain(retryText, retryResult);
+                extractSeat(retryText, retryResult);
+                if(!parsed.dep && retryResult.dep) parsed.dep = retryResult.dep;
+                if(!parsed.arr && retryResult.arr) parsed.arr = retryResult.arr;
+                if(!parsed.train && retryResult.train) parsed.train = retryResult.train;
+                if(!parsed.seat && retryResult.seat) parsed.seat = retryResult.seat;
+              }catch(e){
+                console.warn("영역 재인식 실패", e);
+              }
+            }
+          }
+        }
+
+        // 버스표는 날짜는 잡혔는데 출발시각이 비어있는 경우가 있다(특정 이미지에서 그 숫자만 유독
+        // 못 읽히는 경우). 이때는 페이지 분석 모드를 바꿔(PSM6: 균일한 하나의 텍스트 블록으로 가정)
+        // 전체 이미지를 한 번 더 읽어, 비어있는 항목만 보완한다.
+        const busNeedsRetry = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
+        if(busNeedsRetry){
+          for(const psm of ["6", "11"]){
+            const stillMissing = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
+            if(!stillMissing) break;
+            ocrStatus.textContent = `버스표 누락 항목 재시도 중... (PSM${psm})`;
+            try{
+              await worker.setParameters({ tessedit_pageseg_mode: psm });
+              const retry2 = await worker.recognize(ocrInput);
+              const retryText2 = retry2.data.text || "";
+              if(isBusTicketText(retryText2)){
+                const retryBus = parseBusTicketText(retryText2);
+                parsedList.forEach(p => {
+                  if(p.mode === "bus"){
+                    if(!p.date && retryBus.date) p.date = retryBus.date;
+                    if(!p.depTime && retryBus.depTime) p.depTime = retryBus.depTime;
+                    if(!p.dep && retryBus.dep) p.dep = retryBus.dep;
+                    if(!p.arr && retryBus.arr) p.arr = retryBus.arr;
+                    if(!p.seat && retryBus.seat) p.seat = retryBus.seat;
+                  }
+                });
+              }
+            }catch(e){
+              console.warn("버스표 재인식 실패", e);
+            }
+          }
+
+          // 그래도 출발지가 비어있으면, 페이지 전체가 아니라 출발지가 있는 그 줄만 좌표로 정확히
+          // 잘라 4배 확대해서 마지막으로 한 번 더 시도한다
+          if(parsedList.some(p => p.mode === "bus" && !p.dep)){
+            ocrStatus.textContent = "출발지 확대 재인식 중...";
+            const depLine = await reOcrBusDepLine(ocrInput, data, worker);
+            if(depLine){
+              parsedList.forEach(p => {
+                if(p.mode === "bus" && !p.dep) p.dep = depLine;
+              });
+            }
+            await worker.setParameters({ tessedit_pageseg_mode: "4" });
+          }
+        }
+      }finally{
+        await worker.terminate();
+      }
+
+      // 확인 화면 없이, 최소 조건(날짜·출발시각)만 갖추면 바로 캘린더에 저장한다.
+      // 역명 등 일부가 비어 있어도 저장해두면 캘린더에서 짧게 채워 넣을 수 있어, 통째로 버리는 것보다 낫다.
+      // 이 과정에서 같은 일정(날짜+출발역+도착역+출발시각)이 중복 추출됐는지 한 번 더 검토한 뒤 반영한다.
+      // '다시 인식하기'로 같은 이미지를 재시도할 때 똑같은 일정이 중복 등록되지 않도록,
+      // 이미 캘린더에 저장돼 있는 기존 일정도 중복 검사 대상에 함께 넣는다.
+      let savedCount = 0, skippedCount = 0, duplicateCount = 0, lastDate = null;
+      const seenKeys = new Set(tickets.map(t => `${t.date}|${t.dep}|${t.arr}|${t.depTime}`));
+      parsedList.forEach((parsed, idx) => {
+        if(!parsed.date || !parsed.depTime){
+          skippedCount++;
+          return;
+        }
+        const key = `${parsed.date}|${parsed.dep}|${parsed.arr}|${parsed.depTime}`;
+        if(seenKeys.has(key)){
+          duplicateCount++;
+          return;
+        }
+        seenKeys.add(key);
+        tickets.push({
+          id: `ocr-${Date.now()}-${idx}`,
+          date: parsed.date,
+          dep: parsed.dep || "",
+          arr: parsed.arr || "",
+          depTime: parsed.depTime,
+          arrTime: parsed.arrTime || "",
+          train: parsed.train || "",
+          seat: parsed.seat || "",
+          mode: parsed.mode === "bus" ? "bus" : "train",
+          source: parsed.mode === "bus" ? "이미지 인식(버스)" : "이미지 인식"
+        });
+        savedCount++;
+        lastDate = parsed.date;
+      });
+
+      if(savedCount > 0){
+        saveTickets();
+        viewYear = Number(lastDate.slice(0,4));
+        viewMonth = Number(lastDate.slice(5,7)) - 1;
+        renderCalendar();
+      }
+
+      ocrProgressFill.style.width = "100%";
+      ocrSummaryEl.classList.remove("hidden");
+      recognizeBtn.classList.add("hidden");
+      uploadDoneActions.classList.remove("hidden");
+
+      const dupSuffix = duplicateCount > 0 ? ` (중복 ${duplicateCount}건은 한 번만 저장)` : "";
+      if(savedCount > 0 && skippedCount === 0){
+        ocrStatus.textContent = "";
+        ocrSummaryEl.style.background = "var(--sky)";
+        ocrSummaryEl.style.color = "var(--sky-ink)";
+        ocrSummaryEl.textContent = `${savedCount}건을 캘린더에 자동 저장했습니다.${dupSuffix} 값이 틀렸다면 캘린더에서 해당 일정을 눌러 수정하세요.`;
+      } else if(savedCount > 0 && skippedCount > 0){
+        ocrStatus.textContent = "";
+        ocrSummaryEl.style.background = "var(--yellow)";
+        ocrSummaryEl.style.color = "var(--yellow-ink)";
+        ocrSummaryEl.textContent = `${savedCount}건 저장했습니다.${dupSuffix} ${skippedCount}건은 정보를 충분히 인식하지 못해 저장하지 못했어요 — 직접 입력 탭에서 추가해주세요.`;
+      } else {
+        ocrStatus.textContent = "";
+        ocrSummaryEl.style.background = "#FBEEEB";
+        ocrSummaryEl.style.color = "var(--danger)";
+        const rawText = (data.text || "").trim();
+        const segmentsPreview = usedSegments
+          .map((seg, i) => `[구간 ${i+1}] ${seg.text.trim().slice(0, 180)}${seg.text.trim().length > 180 ? "…" : ""}`)
+          .join("\n\n");
+        ocrSummaryEl.innerHTML = `
+          <p>${rawText.length < 15
+            ? "이미지에서 글자를 거의 읽어오지 못했습니다. 인식 엔진이 이번엔 제대로 동작하지 않았을 가능성이 있습니다."
+            : "이미지에서 필요한 정보를 충분히 인식하지 못해 저장하지 못했습니다."}
+            직접 입력 탭에서 입력해주세요.</p>
+          <p class="mono mt-2" style="font-size:10px; opacity:.85;">분리 방식: ${segmentMethod} · 구간 ${usedSegments.length}개</p>
+          <p class="mono mt-1" style="font-size:10px; white-space:pre-wrap; word-break:break-all; opacity:.85;">실제 파싱에 쓰인 구간 텍스트:
+${segmentsPreview || "(없음)"}</p>
+        `;
+      }
+    }catch(err){
+      console.error(err);
+      ocrProgress.classList.add("hidden");
+      ocrSummaryEl.classList.remove("hidden");
+      ocrSummaryEl.style.background = "#FBEEEB";
+      ocrSummaryEl.style.color = "var(--danger)";
+      ocrSummaryEl.innerHTML = `
+        <p>인식 중 오류가 발생했습니다. 이미지를 다시 확인하거나 직접 입력을 이용해주세요.</p>
+        <p class="mono mt-2" style="font-size:10px; white-space:pre-wrap; word-break:break-all; opacity:.85;">오류 내용: ${(err && err.message) ? err.message : String(err)}</p>
+      `;
+      recognizeBtn.classList.add("hidden");
+      uploadDoneActions.classList.remove("hidden");
+    }finally{
+      recognizeBtn.disabled = false;
+      retryRecognizeBtn.disabled = false;
+    }
+  }
+
+  recognizeBtn.addEventListener("click", runRecognition);
+  retryRecognizeBtn.addEventListener("click", runRecognition);
+
+  /* ---------------------------------------------------------
+     7) 월 이동 컨트롤
+  --------------------------------------------------------- */
+  document.getElementById("prevBtn").addEventListener("click", () => {
+    viewMonth--; if(viewMonth < 0){ viewMonth = 11; viewYear--; } renderCalendar();
+  });
+  document.getElementById("nextBtn").addEventListener("click", () => {
+    viewMonth++; if(viewMonth > 11){ viewMonth = 0; viewYear++; } renderCalendar();
+  });
+  document.getElementById("todayBtn").addEventListener("click", () => {
+    viewYear = today.getFullYear(); viewMonth = today.getMonth(); renderCalendar();
+  });
+
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".note-chip.show-x").forEach(c => c.classList.remove("show-x"));
+  });
+
+  renderCalendar();
+})();
+</script>
+</body>
+</html>
