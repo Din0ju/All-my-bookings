@@ -179,7 +179,7 @@
     <button id="exportBtn" type="button" class="underline" style="color:var(--muted)">데이터 내보내기</button>
     <button id="importBtn" type="button" class="underline" style="color:var(--muted)">데이터 가져오기</button>
   </div>
-  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v24 (데이터 내보내기/가져오기 추가)</p>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v25 (여러 이미지 한 번에 업로드/인식 지원)</p>
 </div>
 
 <!-- 상세 모달 -->
@@ -239,12 +239,13 @@
     <!-- 업로드 탭: 인식 즉시 자동 저장 (확인 화면 없음, 틀리면 캘린더에서 수정) -->
     <div id="tabUpload" class="hidden mb-1">
       <div id="dropZone" class="drop-zone cursor-pointer">
-        <input type="file" id="fileInput" accept="image/*" class="hidden">
+        <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
         <div id="dropZoneIdle">
           <p class="text-sm font-semibold mb-1" style="color:var(--navy)">승차권 캡처 이미지를 선택하세요</p>
-          <p class="text-[11px]" style="color:var(--muted)">클릭하여 업로드 · 이미지 한 장에 승차권 여러 장도 가능</p>
+          <p class="text-[11px]" style="color:var(--muted)">클릭하여 업로드 · 여러 장을 한 번에 선택할 수 있습니다</p>
         </div>
-        <img id="previewImg" class="hidden max-h-40 mx-auto rounded" />
+        <div id="previewList" class="hidden flex gap-2 overflow-x-auto scrollbar-thin py-1"></div>
+        <p id="previewCount" class="hidden text-xs font-semibold mt-2" style="color:var(--navy)"></p>
       </div>
       <button id="recognizeBtn" type="button" disabled class="mt-3 w-full py-2 rounded text-sm font-semibold btn-primary">이미지에서 인식 후 자동 저장</button>
       <div id="ocrProgress" class="hidden mt-3">
@@ -689,14 +690,15 @@
   --------------------------------------------------------- */
   const dropZone = document.getElementById("dropZone");
   const fileInput = document.getElementById("fileInput");
-  const previewImg = document.getElementById("previewImg");
+  const previewList = document.getElementById("previewList");
+  const previewCount = document.getElementById("previewCount");
   const dropZoneIdle = document.getElementById("dropZoneIdle");
   const recognizeBtn = document.getElementById("recognizeBtn");
   const ocrProgress = document.getElementById("ocrProgress");
   const ocrProgressFill = document.getElementById("ocrProgressFill");
   const ocrStatus = document.getElementById("ocrStatus");
 
-  let selectedFile = null;
+  let selectedFiles = [];
 
   const ocrSummaryEl = document.getElementById("ocrSummary");
   const uploadDoneActions = document.getElementById("uploadDoneActions");
@@ -704,10 +706,11 @@
   const retryRecognizeBtn = document.getElementById("retryRecognizeBtn");
 
   function resetUploadState(){
-    selectedFile = null;
+    selectedFiles = [];
     fileInput.value = "";
-    previewImg.src = "";
-    previewImg.classList.add("hidden");
+    previewList.innerHTML = "";
+    previewList.classList.add("hidden");
+    previewCount.classList.add("hidden");
     dropZoneIdle.classList.remove("hidden");
     recognizeBtn.disabled = true;
     recognizeBtn.classList.remove("hidden");
@@ -724,25 +727,34 @@
   dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropZone.classList.remove("drag-over");
-    if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   });
   fileInput.addEventListener("change", (e) => {
-    if(e.target.files[0]) handleFile(e.target.files[0]);
+    if(e.target.files.length) handleFiles(e.target.files);
   });
 
-  function handleFile(file){
-    if(!file.type.startsWith("image/")){
+  function handleFiles(fileList){
+    const files = Array.from(fileList).filter(f => f.type.startsWith("image/"));
+    if(!files.length){
       alert("이미지 파일만 업로드할 수 있습니다.");
       return;
     }
-    selectedFile = file;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      previewImg.src = ev.target.result;
-      previewImg.classList.remove("hidden");
-      dropZoneIdle.classList.add("hidden");
-    };
-    reader.readAsDataURL(file);
+    selectedFiles = files;
+    previewList.innerHTML = "";
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = document.createElement("img");
+        img.src = ev.target.result;
+        img.className = "h-16 w-auto rounded flex-shrink-0";
+        previewList.appendChild(img);
+      };
+      reader.readAsDataURL(file);
+    });
+    previewList.classList.remove("hidden");
+    previewCount.textContent = `${files.length}장 선택됨`;
+    previewCount.classList.remove("hidden");
+    dropZoneIdle.classList.add("hidden");
     recognizeBtn.disabled = false;
   }
 
@@ -1365,8 +1377,135 @@
     }
   }
 
+  // 이미지 1장에 대한 전체 인식 파이프라인(전처리 → PSM4 인식 → 구간분리/파싱 → 각종 보강 재시도).
+  // worker를 파라미터로 받아 여러 이미지를 처리할 때 하나의 worker를 재사용할 수 있게 한다.
+  async function processImageFile(file, worker){
+    let ocrInput;
+    try{
+      ocrInput = await preprocessImage(file);
+    }catch(e){
+      console.warn("이미지 전처리 실패, 가공 없이 인식합니다.", e);
+      ocrInput = await loadPlainCanvas(file);
+    }
+
+    await worker.setParameters({ tessedit_pageseg_mode: "4" });
+    const result = await worker.recognize(ocrInput);
+    const data = result.data;
+
+    const { segments: usedSegments, method: segmentMethod } = getTicketSegments(data.text || "", data);
+    const parsedList = usedSegments.map(seg => {
+      if(isBusTicketText(seg.text)){
+        const r = parseBusTicketText(seg.text);
+        r.mode = "bus";
+        return r;
+      }
+      const r = parseTicketSegment(seg.text);
+      r.mode = "train";
+      return r;
+    });
+
+    // 영수증처럼 승차권이 1건뿐인 경우: 승차권 번호(숫자 패턴)를 기준점으로 삼아 놓친 항목을 보완한다.
+    if(parsedList.length === 1 && parsedList[0].mode !== "bus"){
+      const anchorResult = extractByTicketNumberAnchor(data);
+      if(anchorResult){
+        const p = parsedList[0];
+        if(!p.date && anchorResult.date) p.date = anchorResult.date;
+        if(!p.dep && anchorResult.dep) p.dep = anchorResult.dep;
+        if(!p.arr && anchorResult.arr) p.arr = anchorResult.arr;
+        if(!p.depTime && anchorResult.depTime) p.depTime = anchorResult.depTime;
+        if(!p.arrTime && anchorResult.arrTime) p.arrTime = anchorResult.arrTime;
+        if(!p.train && anchorResult.train) p.train = anchorResult.train;
+        if(!p.seat && anchorResult.seat) p.seat = anchorResult.seat;
+      }
+    } else if(parsedList.length > 1){
+      for(let i = 0; i < parsedList.length; i++){
+        if(parsedList[i].mode === "bus") continue;
+        const seg = usedSegments[i];
+        if(!seg.words || !seg.words.length) continue;
+        const p = parsedList[i];
+        const anchorResult = extractByTicketNumberAnchorCard(seg.words);
+        if(!anchorResult) continue;
+        if(!p.date && anchorResult.date) p.date = anchorResult.date;
+        if(!p.dep && anchorResult.dep) p.dep = anchorResult.dep;
+        if(!p.arr && anchorResult.arr) p.arr = anchorResult.arr;
+        if(!p.depTime && anchorResult.depTime) p.depTime = anchorResult.depTime;
+        if(!p.arrTime && anchorResult.arrTime) p.arrTime = anchorResult.arrTime;
+        if(!p.train && anchorResult.train) p.train = anchorResult.train;
+        if(!p.seat && anchorResult.seat) p.seat = anchorResult.seat;
+      }
+    }
+
+    // 출발역/도착역 중 하나라도 비어 있고 좌표 정보가 있으면, 그 구간만 다시 잘라 확대 재인식한다.
+    const needsRetry = parsedList.some((p, i) => p.mode !== "bus" && (!p.dep || !p.arr) && usedSegments[i].yStart != null);
+    if(needsRetry){
+      ocrStatus.textContent = "누락된 항목 재시도 중...";
+      for(let i = 0; i < parsedList.length; i++){
+        const parsed = parsedList[i];
+        const seg = usedSegments[i];
+        if(parsed.mode !== "bus" && (!parsed.dep || !parsed.arr) && seg.yStart != null && seg.yEnd != null){
+          try{
+            const retryText = await reOcrRegion(ocrInput, seg.yStart, seg.yEnd, worker);
+            const retryResult = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
+            extractStationsAndTimes(retryText, retryResult);
+            extractTrain(retryText, retryResult);
+            extractSeat(retryText, retryResult);
+            if(!parsed.dep && retryResult.dep) parsed.dep = retryResult.dep;
+            if(!parsed.arr && retryResult.arr) parsed.arr = retryResult.arr;
+            if(!parsed.train && retryResult.train) parsed.train = retryResult.train;
+            if(!parsed.seat && retryResult.seat) parsed.seat = retryResult.seat;
+          }catch(e){
+            console.warn("영역 재인식 실패", e);
+          }
+        }
+      }
+    }
+
+    // 버스표: 날짜는 있는데 출발시각/출발지/도착지가 비어있으면 PSM6→PSM11로 전체 재시도,
+    // 그래도 출발지가 비면 그 줄만 좌표로 확대해 최종 재시도한다.
+    const busNeedsRetry = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
+    if(busNeedsRetry){
+      for(const psm of ["6", "11"]){
+        const stillMissing = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
+        if(!stillMissing) break;
+        ocrStatus.textContent = `버스표 누락 항목 재시도 중... (PSM${psm})`;
+        try{
+          await worker.setParameters({ tessedit_pageseg_mode: psm });
+          const retry2 = await worker.recognize(ocrInput);
+          const retryText2 = retry2.data.text || "";
+          if(isBusTicketText(retryText2)){
+            const retryBus = parseBusTicketText(retryText2);
+            parsedList.forEach(p => {
+              if(p.mode === "bus"){
+                if(!p.date && retryBus.date) p.date = retryBus.date;
+                if(!p.depTime && retryBus.depTime) p.depTime = retryBus.depTime;
+                if(!p.dep && retryBus.dep) p.dep = retryBus.dep;
+                if(!p.arr && retryBus.arr) p.arr = retryBus.arr;
+                if(!p.seat && retryBus.seat) p.seat = retryBus.seat;
+              }
+            });
+          }
+        }catch(e){
+          console.warn("버스표 재인식 실패", e);
+        }
+      }
+
+      if(parsedList.some(p => p.mode === "bus" && !p.dep)){
+        ocrStatus.textContent = "출발지 확대 재인식 중...";
+        const depLine = await reOcrBusDepLine(ocrInput, data, worker);
+        if(depLine){
+          parsedList.forEach(p => {
+            if(p.mode === "bus" && !p.dep) p.dep = depLine;
+          });
+        }
+        await worker.setParameters({ tessedit_pageseg_mode: "4" });
+      }
+    }
+
+    return { parsedList, usedSegments, segmentMethod, rawText: data.text || "" };
+  }
+
   async function runRecognition(){
-    if(!selectedFile) return;
+    if(!selectedFiles.length) return;
     if(typeof Tesseract === "undefined"){
       ocrStatus.textContent = "OCR 라이브러리를 불러오지 못했습니다. 네트워크 연결을 확인하거나 직접 입력을 이용해주세요.";
       ocrProgress.classList.remove("hidden");
@@ -1382,22 +1521,18 @@
     ocrStatus.textContent = "이미지 분석 준비 중...";
     ocrProgressFill.style.width = "0%";
 
-    try{
-      let ocrInput;
-      try{
-        ocrInput = await preprocessImage(selectedFile);
-      }catch(e){
-        console.warn("이미지 전처리 실패, 가공 없이 인식합니다.", e);
-        ocrInput = await loadPlainCanvas(selectedFile);
-      }
+    // 여러 이미지를 한 번에 처리할 때도 같은 배치 안에서, 그리고 이미 캘린더에 저장된 기존 일정과도
+    // 중복(날짜+출발역+도착역+출발시각 동일)이 없도록 하나의 seenKeys로 전체를 함께 검사한다.
+    let totalSaved = 0, totalSkipped = 0, totalDuplicate = 0, lastDate = null;
+    const seenKeys = new Set(tickets.map(t => `${t.date}|${t.dep}|${t.arr}|${t.depTime}`));
+    const failedDiagnostics = [];
 
-      // 이 승차권 화면은 큰 역명, 중간 크기 시각, 작은 라벨이 세로로 섞여 있는 '단일 컬럼, 다양한 글자 크기'
-      // 레이아웃이다. 기본 자동 분석 모드(PSM 3)는 이런 화면에서 큰 굵은 글씨 역명을 통째로 놓치는 경우가
-      // 있어, worker를 직접 만들어 PSM 4(가변 크기의 단일 컬럼 텍스트로 가정)로 설정해 인식을 시도한다.
+    try{
       const worker = await Tesseract.createWorker("kor+eng", 1, {
         logger: (m) => {
           if(m.status){
-            ocrStatus.textContent = `${m.status} ${m.progress ? Math.round(m.progress*100)+"%" : ""}`;
+            const prefix = selectedFiles.length > 1 ? `[${currentFileIdx + 1}/${selectedFiles.length}] ` : "";
+            ocrStatus.textContent = `${prefix}${m.status} ${m.progress ? Math.round(m.progress*100)+"%" : ""}`;
           }
           if(typeof m.progress === "number"){
             ocrProgressFill.style.width = `${Math.round(m.progress*100)}%`;
@@ -1405,167 +1540,64 @@
         }
       });
 
-      let data, usedSegments, segmentMethod, parsedList;
+      var currentFileIdx = 0;
       try{
-        await worker.setParameters({ tessedit_pageseg_mode: "4" });
-        const result = await worker.recognize(ocrInput);
-        data = result.data;
-
-        ({ segments: usedSegments, method: segmentMethod } = getTicketSegments(data.text || "", data));
-        parsedList = usedSegments.map(seg => {
-          if(isBusTicketText(seg.text)){
-            const r = parseBusTicketText(seg.text);
-            r.mode = "bus";
-            return r;
+        for(currentFileIdx = 0; currentFileIdx < selectedFiles.length; currentFileIdx++){
+          const file = selectedFiles[currentFileIdx];
+          let fileResult;
+          try{
+            fileResult = await processImageFile(file, worker);
+          }catch(e){
+            console.error(e);
+            failedDiagnostics.push(`[이미지 ${currentFileIdx+1}] 인식 중 오류: ${(e && e.message) ? e.message : String(e)}`);
+            continue;
           }
-          const r = parseTicketSegment(seg.text);
-          r.mode = "train";
-          return r;
-        });
+          const { parsedList, usedSegments, segmentMethod, rawText } = fileResult;
 
-        // 영수증처럼 승차권이 1건뿐인 경우: 라벨 텍스트 대신 승차권 번호(숫자 패턴)를 기준점으로 삼아
-        // 고정된 항목 순서에 따라 값을 다시 읽어와, 라벨이 깨져서 놓친 항목을 보완한다.
-        // (버스표는 항목 구조가 달라 이 보강은 기차 세그먼트에만 적용한다)
-        if(parsedList.length === 1 && parsedList[0].mode !== "bus"){
-          const anchorResult = extractByTicketNumberAnchor(data);
-          if(anchorResult){
-            const p = parsedList[0];
-            if(!p.date && anchorResult.date) p.date = anchorResult.date;
-            if(!p.dep && anchorResult.dep) p.dep = anchorResult.dep;
-            if(!p.arr && anchorResult.arr) p.arr = anchorResult.arr;
-            if(!p.depTime && anchorResult.depTime) p.depTime = anchorResult.depTime;
-            if(!p.arrTime && anchorResult.arrTime) p.arrTime = anchorResult.arrTime;
-            if(!p.train && anchorResult.train) p.train = anchorResult.train;
-            if(!p.seat && anchorResult.seat) p.seat = anchorResult.seat;
-          }
-        } else if(parsedList.length > 1){
-          // 앱 캡처 카드(승차권 여러 건)는 카드마다 줄 수가 다를 수 있어, 구간별로 내용-신호 기반
-          // 앵커 추출을 각각 시도해 빈 항목만 보완한다.
-          for(let i = 0; i < parsedList.length; i++){
-            if(parsedList[i].mode === "bus") continue;
-            const seg = usedSegments[i];
-            if(!seg.words || !seg.words.length) continue;
-            const p = parsedList[i];
-            const anchorResult = extractByTicketNumberAnchorCard(seg.words);
-            if(!anchorResult) continue;
-            if(!p.date && anchorResult.date) p.date = anchorResult.date;
-            if(!p.dep && anchorResult.dep) p.dep = anchorResult.dep;
-            if(!p.arr && anchorResult.arr) p.arr = anchorResult.arr;
-            if(!p.depTime && anchorResult.depTime) p.depTime = anchorResult.depTime;
-            if(!p.arrTime && anchorResult.arrTime) p.arrTime = anchorResult.arrTime;
-            if(!p.train && anchorResult.train) p.train = anchorResult.train;
-            if(!p.seat && anchorResult.seat) p.seat = anchorResult.seat;
-          }
-        }
-
-        // 출발역/도착역 중 하나라도 비어 있고 좌표 정보가 있으면, 그 승차권 구간만 원본에서 다시 잘라
-        // 더 크게 확대한 뒤 한 번 더 인식을 시도해 빈 항목을 보완한다. (버스표는 형식이 달라 제외)
-        const needsRetry = parsedList.some((p, i) => p.mode !== "bus" && (!p.dep || !p.arr) && usedSegments[i].yStart != null);
-        if(needsRetry){
-          ocrStatus.textContent = "누락된 항목 재시도 중...";
-          for(let i = 0; i < parsedList.length; i++){
-            const parsed = parsedList[i];
-            const seg = usedSegments[i];
-            if(parsed.mode !== "bus" && (!parsed.dep || !parsed.arr) && seg.yStart != null && seg.yEnd != null){
-              try{
-                const retryText = await reOcrRegion(ocrInput, seg.yStart, seg.yEnd, worker);
-                const retryResult = { date:"", dep:"", arr:"", depTime:"", arrTime:"", train:"", seat:"" };
-                extractStationsAndTimes(retryText, retryResult);
-                extractTrain(retryText, retryResult);
-                extractSeat(retryText, retryResult);
-                if(!parsed.dep && retryResult.dep) parsed.dep = retryResult.dep;
-                if(!parsed.arr && retryResult.arr) parsed.arr = retryResult.arr;
-                if(!parsed.train && retryResult.train) parsed.train = retryResult.train;
-                if(!parsed.seat && retryResult.seat) parsed.seat = retryResult.seat;
-              }catch(e){
-                console.warn("영역 재인식 실패", e);
-              }
+          let savedThisFile = 0;
+          parsedList.forEach((parsed, idx) => {
+            if(!parsed.date || !parsed.depTime){
+              totalSkipped++;
+              return;
             }
-          }
-        }
-
-        // 버스표는 날짜는 잡혔는데 출발시각이 비어있는 경우가 있다(특정 이미지에서 그 숫자만 유독
-        // 못 읽히는 경우). 이때는 페이지 분석 모드를 바꿔(PSM6: 균일한 하나의 텍스트 블록으로 가정)
-        // 전체 이미지를 한 번 더 읽어, 비어있는 항목만 보완한다.
-        const busNeedsRetry = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
-        if(busNeedsRetry){
-          for(const psm of ["6", "11"]){
-            const stillMissing = parsedList.some(p => p.mode === "bus" && p.date && (!p.depTime || !p.dep || !p.arr));
-            if(!stillMissing) break;
-            ocrStatus.textContent = `버스표 누락 항목 재시도 중... (PSM${psm})`;
-            try{
-              await worker.setParameters({ tessedit_pageseg_mode: psm });
-              const retry2 = await worker.recognize(ocrInput);
-              const retryText2 = retry2.data.text || "";
-              if(isBusTicketText(retryText2)){
-                const retryBus = parseBusTicketText(retryText2);
-                parsedList.forEach(p => {
-                  if(p.mode === "bus"){
-                    if(!p.date && retryBus.date) p.date = retryBus.date;
-                    if(!p.depTime && retryBus.depTime) p.depTime = retryBus.depTime;
-                    if(!p.dep && retryBus.dep) p.dep = retryBus.dep;
-                    if(!p.arr && retryBus.arr) p.arr = retryBus.arr;
-                    if(!p.seat && retryBus.seat) p.seat = retryBus.seat;
-                  }
-                });
-              }
-            }catch(e){
-              console.warn("버스표 재인식 실패", e);
+            const key = `${parsed.date}|${parsed.dep}|${parsed.arr}|${parsed.depTime}`;
+            if(seenKeys.has(key)){
+              totalDuplicate++;
+              return;
             }
-          }
+            seenKeys.add(key);
+            tickets.push({
+              id: `ocr-${Date.now()}-${currentFileIdx}-${idx}`,
+              date: parsed.date,
+              dep: parsed.dep || "",
+              arr: parsed.arr || "",
+              depTime: parsed.depTime,
+              arrTime: parsed.arrTime || "",
+              train: parsed.train || "",
+              seat: parsed.seat || "",
+              mode: parsed.mode === "bus" ? "bus" : "train",
+              source: parsed.mode === "bus" ? "이미지 인식(버스)" : "이미지 인식"
+            });
+            savedThisFile++;
+            totalSaved++;
+            lastDate = parsed.date;
+          });
 
-          // 그래도 출발지가 비어있으면, 페이지 전체가 아니라 출발지가 있는 그 줄만 좌표로 정확히
-          // 잘라 4배 확대해서 마지막으로 한 번 더 시도한다
-          if(parsedList.some(p => p.mode === "bus" && !p.dep)){
-            ocrStatus.textContent = "출발지 확대 재인식 중...";
-            const depLine = await reOcrBusDepLine(ocrInput, data, worker);
-            if(depLine){
-              parsedList.forEach(p => {
-                if(p.mode === "bus" && !p.dep) p.dep = depLine;
-              });
-            }
-            await worker.setParameters({ tessedit_pageseg_mode: "4" });
+          if(savedThisFile === 0){
+            const rawLen = rawText.trim().length;
+            const preview = usedSegments
+              .map((seg, i) => `[구간 ${i+1}] ${seg.text.trim().slice(0, 150)}${seg.text.trim().length > 150 ? "…" : ""}`)
+              .join("\n");
+            failedDiagnostics.push(
+              `[이미지 ${currentFileIdx+1}] ${rawLen < 15 ? "글자를 거의 읽지 못함" : "정보 부족"} · 분리 방식: ${segmentMethod}\n${preview || "(내용 없음)"}`
+            );
           }
         }
       }finally{
         await worker.terminate();
       }
 
-      // 확인 화면 없이, 최소 조건(날짜·출발시각)만 갖추면 바로 캘린더에 저장한다.
-      // 역명 등 일부가 비어 있어도 저장해두면 캘린더에서 짧게 채워 넣을 수 있어, 통째로 버리는 것보다 낫다.
-      // 이 과정에서 같은 일정(날짜+출발역+도착역+출발시각)이 중복 추출됐는지 한 번 더 검토한 뒤 반영한다.
-      // '다시 인식하기'로 같은 이미지를 재시도할 때 똑같은 일정이 중복 등록되지 않도록,
-      // 이미 캘린더에 저장돼 있는 기존 일정도 중복 검사 대상에 함께 넣는다.
-      let savedCount = 0, skippedCount = 0, duplicateCount = 0, lastDate = null;
-      const seenKeys = new Set(tickets.map(t => `${t.date}|${t.dep}|${t.arr}|${t.depTime}`));
-      parsedList.forEach((parsed, idx) => {
-        if(!parsed.date || !parsed.depTime){
-          skippedCount++;
-          return;
-        }
-        const key = `${parsed.date}|${parsed.dep}|${parsed.arr}|${parsed.depTime}`;
-        if(seenKeys.has(key)){
-          duplicateCount++;
-          return;
-        }
-        seenKeys.add(key);
-        tickets.push({
-          id: `ocr-${Date.now()}-${idx}`,
-          date: parsed.date,
-          dep: parsed.dep || "",
-          arr: parsed.arr || "",
-          depTime: parsed.depTime,
-          arrTime: parsed.arrTime || "",
-          train: parsed.train || "",
-          seat: parsed.seat || "",
-          mode: parsed.mode === "bus" ? "bus" : "train",
-          source: parsed.mode === "bus" ? "이미지 인식(버스)" : "이미지 인식"
-        });
-        savedCount++;
-        lastDate = parsed.date;
-      });
-
-      if(savedCount > 0){
+      if(totalSaved > 0){
         saveTickets();
         viewYear = Number(lastDate.slice(0,4));
         viewMonth = Number(lastDate.slice(5,7)) - 1;
@@ -1577,34 +1609,27 @@
       recognizeBtn.classList.add("hidden");
       uploadDoneActions.classList.remove("hidden");
 
-      const dupSuffix = duplicateCount > 0 ? ` (중복 ${duplicateCount}건은 한 번만 저장)` : "";
-      if(savedCount > 0 && skippedCount === 0){
+      const dupSuffix = totalDuplicate > 0 ? ` (중복 ${totalDuplicate}건은 한 번만 저장)` : "";
+      const fileCountLabel = selectedFiles.length > 1 ? `이미지 ${selectedFiles.length}장 중 ` : "";
+      const diagnosticsHtml = failedDiagnostics.length
+        ? `<p class="mono mt-2" style="font-size:10px; white-space:pre-wrap; word-break:break-all; opacity:.85;">${failedDiagnostics.join("\n\n")}</p>`
+        : "";
+
+      if(totalSaved > 0 && totalSkipped === 0 && failedDiagnostics.length === 0){
         ocrStatus.textContent = "";
         ocrSummaryEl.style.background = "var(--sky)";
         ocrSummaryEl.style.color = "var(--sky-ink)";
-        ocrSummaryEl.textContent = `${savedCount}건을 캘린더에 자동 저장했습니다.${dupSuffix} 값이 틀렸다면 캘린더에서 해당 일정을 눌러 수정하세요.`;
-      } else if(savedCount > 0 && skippedCount > 0){
+        ocrSummaryEl.textContent = `${fileCountLabel}${totalSaved}건을 캘린더에 자동 저장했습니다.${dupSuffix} 값이 틀렸다면 캘린더에서 해당 일정을 눌러 수정하세요.`;
+      } else if(totalSaved > 0){
         ocrStatus.textContent = "";
         ocrSummaryEl.style.background = "var(--yellow)";
         ocrSummaryEl.style.color = "var(--yellow-ink)";
-        ocrSummaryEl.textContent = `${savedCount}건 저장했습니다.${dupSuffix} ${skippedCount}건은 정보를 충분히 인식하지 못해 저장하지 못했어요 — 직접 입력 탭에서 추가해주세요.`;
+        ocrSummaryEl.innerHTML = `<p>${fileCountLabel}${totalSaved}건 저장했습니다.${dupSuffix} ${totalSkipped}건은 정보를 충분히 인식하지 못해 저장하지 못했어요 — 직접 입력 탭에서 추가해주세요.</p>${diagnosticsHtml}`;
       } else {
         ocrStatus.textContent = "";
         ocrSummaryEl.style.background = "#FBEEEB";
         ocrSummaryEl.style.color = "var(--danger)";
-        const rawText = (data.text || "").trim();
-        const segmentsPreview = usedSegments
-          .map((seg, i) => `[구간 ${i+1}] ${seg.text.trim().slice(0, 180)}${seg.text.trim().length > 180 ? "…" : ""}`)
-          .join("\n\n");
-        ocrSummaryEl.innerHTML = `
-          <p>${rawText.length < 15
-            ? "이미지에서 글자를 거의 읽어오지 못했습니다. 인식 엔진이 이번엔 제대로 동작하지 않았을 가능성이 있습니다."
-            : "이미지에서 필요한 정보를 충분히 인식하지 못해 저장하지 못했습니다."}
-            직접 입력 탭에서 입력해주세요.</p>
-          <p class="mono mt-2" style="font-size:10px; opacity:.85;">분리 방식: ${segmentMethod} · 구간 ${usedSegments.length}개</p>
-          <p class="mono mt-1" style="font-size:10px; white-space:pre-wrap; word-break:break-all; opacity:.85;">실제 파싱에 쓰인 구간 텍스트:
-${segmentsPreview || "(없음)"}</p>
-        `;
+        ocrSummaryEl.innerHTML = `<p>이미지에서 필요한 정보를 충분히 인식하지 못해 저장하지 못했습니다. 직접 입력 탭에서 입력해주세요.</p>${diagnosticsHtml}`;
       }
     }catch(err){
       console.error(err);
@@ -1626,6 +1651,7 @@ ${segmentsPreview || "(없음)"}</p>
 
   recognizeBtn.addEventListener("click", runRecognition);
   retryRecognizeBtn.addEventListener("click", runRecognition);
+
 
   /* ---------------------------------------------------------
      7) 월 이동 컨트롤
