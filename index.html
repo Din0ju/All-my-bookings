@@ -175,7 +175,11 @@
   <p class="text-[11px] mt-4 px-1" style="color:var(--muted)">
     일반앱 · 기업회원 예매 내역이 정규화되어 하나의 달력에 병합 표시됩니다. 추가·수정한 내용은 이 브라우저에 저장됩니다.
   </p>
-  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v23 (2026년 대한민국 공휴일 반영)</p>
+  <div class="flex gap-3 mt-2 px-1 text-[11px]">
+    <button id="exportBtn" type="button" class="underline" style="color:var(--muted)">데이터 내보내기</button>
+    <button id="importBtn" type="button" class="underline" style="color:var(--muted)">데이터 가져오기</button>
+  </div>
+  <p class="mono text-[10px] mt-1 px-1" style="color:#C5C9CE">build: v24 (데이터 내보내기/가져오기 추가)</p>
 </div>
 
 <!-- 상세 모달 -->
@@ -371,6 +375,45 @@
 
   let tickets = loadTickets();
   let notes = loadNotes();
+
+  // 브라우저의 저장공간(localStorage)은 주소(origin)마다 완전히 분리되어 있어서,
+  // 로컬 파일 주소에서 쓰던 데이터가 새 호스팅 주소로 자동으로 옮겨지지 않는다.
+  // 이 기능은 그 데이터를 JSON 텍스트로 내보내고, 다른 주소에서 붙여넣어 가져올 수 있게 해준다.
+  function exportData(){
+    const payload = JSON.stringify({ tickets, notes });
+    prompt("아래 내용을 전체 선택해서 복사한 뒤, 다른 주소의 '데이터 가져오기'에 붙여넣으세요.", payload);
+  }
+
+  function importData(){
+    const input = prompt("내보내기한 데이터를 붙여넣어 주세요.");
+    if(!input) return;
+    try{
+      const parsed = JSON.parse(input);
+      if(!parsed || !Array.isArray(parsed.tickets)) throw new Error("형식 오류");
+      const existingKeys = new Set(tickets.map(t => `${t.date}|${t.dep}|${t.arr}|${t.depTime}`));
+      let added = 0;
+      parsed.tickets.forEach(t => {
+        const key = `${t.date}|${t.dep}|${t.arr}|${t.depTime}`;
+        if(!existingKeys.has(key)){
+          tickets.push(t);
+          existingKeys.add(key);
+          added++;
+        }
+      });
+      if(parsed.notes && typeof parsed.notes === "object"){
+        Object.keys(parsed.notes).forEach(k => { notes[k] = true; });
+        saveNotes();
+      }
+      saveTickets();
+      renderCalendar();
+      alert(`${added}건의 일정을 가져왔습니다. (겹치는 일정은 건너뛰었습니다)`);
+    }catch(e){
+      alert("가져오기에 실패했습니다. 내보내기한 텍스트를 그대로 붙여넣었는지 확인해주세요.");
+    }
+  }
+
+  document.getElementById("exportBtn").addEventListener("click", exportData);
+  document.getElementById("importBtn").addEventListener("click", importData);
 
   /* ---------------------------------------------------------
      3) 캘린더 렌더링
